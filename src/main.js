@@ -37,7 +37,7 @@ const client = new tmi.Client({
     secure: true,
     reconnect: true
   },
-  channels: ['uzkapajam']
+  channels: ['sodapoppin']
 });
 
 client.connect();
@@ -224,19 +224,17 @@ function getShortestDelta(coord1, coord2, maxCoord) {
     }
 
   async function play(data) {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      getUserProfilePicture(data.username).then((data) => {
-        img.src = data
-      });
-
-      const radius = 30;
-      let x, y, safe = false;
-      for (let attempts = 0; attempts < 100 && !safe; attempts++) {
-        x = Math.random() * (canvas.width - 2 * radius) + radius;
-        y = Math.random() * (canvas.height - 2 * radius) + radius;
-        safe = !players.some(p => Math.hypot(p.x - x, p.y - y) < p.r + radius + 10);
-      }
+    getUserProfilePicture(data.username).then((avatar_url) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = avatar_url
+        const radius = 30;
+        let x, y, safe = false;
+        for (let attempts = 0; attempts < 100 && !safe; attempts++) {
+          x = Math.random() * (canvas.width - 2 * radius) + radius;
+          y = Math.random() * (canvas.height - 2 * radius) + radius;
+          safe = !players.some(p => Math.hypot(p.x - x, p.y - y) < p.r + radius + 10);
+        }
 
       const player = {
         username: data.username,
@@ -901,6 +899,7 @@ function getShortestDelta(coord1, coord2, maxCoord) {
           p.dy += normY * 0.015;
         }
 
+        const speed = 1 * (30 / p.r);
         const speed = 1 * (30 / p.r);
         p.dx = Math.max(-speed, Math.min(speed, p.dx));
         p.dy = Math.max(-speed, Math.min(speed, p.dy));
