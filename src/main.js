@@ -37,7 +37,7 @@ const client = new tmi.Client({
     secure: true,
     reconnect: true
   },
-  channels: ['shroud']
+  channels: ['uzkapajam']
 });
 
 client.connect();
@@ -166,8 +166,8 @@ function getShortestDelta(coord1, coord2, maxCoord) {
     function drawSpikedTree(tree) {
       // Pulsation logic
       const baseRadius = SPIKED_TREE_RADIUS; // Base radius for pulsation
-      const animationSpeed = 1000; // milliseconds for one full pulsation cycle (approx)
-      const scaleFactor = 0.5; // Max increase factor (0.5 means 50% larger)
+      const animationSpeed = 1500; // milliseconds for one full pulsation cycle (approx)
+      const scaleFactor = 0.2; // Max increase factor (0.5 means 50% larger)
 
       // Calculate current scale based on time
       // (Math.sin(...) + 1) / 2 maps sin's -1 to 1 range to 0 to 1 range
