@@ -164,6 +164,19 @@ function getShortestDelta(coord1, coord2, maxCoord) {
     resizeCanvas();
 
     function drawSpikedTree(tree) {
+      // Pulsation logic
+      const baseRadius = SPIKED_TREE_RADIUS; // Base radius for pulsation
+      const animationSpeed = 1000; // milliseconds for one full pulsation cycle (approx)
+      const scaleFactor = 0.5; // Max increase factor (0.5 means 50% larger)
+
+      // Calculate current scale based on time
+      // (Math.sin(...) + 1) / 2 maps sin's -1 to 1 range to 0 to 1 range
+      const currentScale = (Math.sin(Date.now() / (animationSpeed / (2 * Math.PI))) + 1) / 2;
+
+      // Apply the animated radius to tree.r for this frame
+      // This change will affect drawing and collision detection as tree.r is used elsewhere.
+      tree.r = baseRadius + (baseRadius * scaleFactor * currentScale);
+
       const numSpikes = 12; // Number of spikes around the tree
       const spikeLength = tree.r * 0.3; // Length of the spikes
       // const spikeBaseWidth = tree.r * 0.3; // Width of the base of each spike // Not used in current spike drawing
@@ -753,9 +766,9 @@ function getShortestDelta(coord1, coord2, maxCoord) {
                   if (dist_p_to_other === 0) continue; // Avoid division by zero
 
                   // Fleeing condition: other is bigger
-                  if (other.r > p.r * 1.1 && dist_p_to_other < 400) {
-                      p.dx -= (vec_p_to_other_x / dist_p_to_other) * 0.05; // Move in opposite direction of other
-                      p.dy -= (vec_p_to_other_y / dist_p_to_other) * 0.05;
+                  if (other.r > p.r * 1.1 && dist_p_to_other < other.r * 2) {
+                      p.dx -= (vec_p_to_other_x / dist_p_to_other) * 0.15; // Move in opposite direction of other
+                      p.dy -= (vec_p_to_other_y / dist_p_to_other) * 0.15;
                       fleeing = true; target = null; potentialAttackTarget = null; break;
                   }
                   // Potential attack condition: p is bigger
