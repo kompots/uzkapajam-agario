@@ -37,7 +37,7 @@ const client = new tmi.Client({
     secure: true,
     reconnect: true
   },
-  channels: ['sodapoppin']
+  channels: ['shroud']
 });
 
 client.connect();
@@ -45,7 +45,6 @@ client.connect();
 client.on('message', (channel, tags, message, self) => {
   let cmds = ["!play", "!eat"]
   message = cmds[Math.floor(Math.random() * cmds.length)];
-  console.log("Executed : ", message , " for ", tags.username)
     if (message.includes("!eat")) {
       let parts = message.split(' ');
       parts[1] = players[Math.floor(Math.random() * players.length)]
@@ -53,12 +52,15 @@ client.on('message', (channel, tags, message, self) => {
     } else if (message === "!stop") {
       delete eatTargets[tags.username];
     }
-    else if (message === "!play") {
+    else {
       play(tags)
     }
 });
 
 
+const tree_img = new Image();
+tree_img.crossOrigin = "anonymous";
+tree_img.src = 'https://i.imgur.com/i7UkBx6.png'
 
     const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
@@ -92,9 +94,9 @@ function getShortestDelta(coord1, coord2, maxCoord) {
     }
 }
 
-    const NUM_SPIKED_TREES = 5;
+    const NUM_SPIKED_TREES =4;
     const SPIKED_TREE_RADIUS = 20;
-    const SPIKED_TREE_RESPAWN_DELAY = 15000; // 15 seconds
+    const SPIKED_TREE_RESPAWN_DELAY = 30000; // 15 seconds
     let lastTreeRespawnTime = 0;
 
     function trySpawnOneSpikedTree() {
@@ -163,7 +165,7 @@ function getShortestDelta(coord1, coord2, maxCoord) {
 
     function drawSpikedTree(tree) {
       const numSpikes = 12; // Number of spikes around the tree
-      const spikeLength = tree.r * 0.2; // Length of the spikes
+      const spikeLength = tree.r * 0.3; // Length of the spikes
       // const spikeBaseWidth = tree.r * 0.3; // Width of the base of each spike // Not used in current spike drawing
 
       // Draw the main body of the tree (circle)
@@ -171,14 +173,10 @@ function getShortestDelta(coord1, coord2, maxCoord) {
       ctx.arc(tree.x, tree.y, tree.r, 0, Math.PI * 2);
       ctx.fillStyle = "black"; // Or any other tree-like color
       ctx.fill();
-      ctx.strokeStyle = "red";
+      ctx.strokeStyle = "darkpurple";
       ctx.lineWidth = 3;
       ctx.stroke();
-
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = 'https://i.imgur.com/i7UkBx6.png'
-      ctx.drawImage(img, tree.x - tree.r, tree.y - tree.r, tree.r * 2, tree.r * 2);
+      ctx.drawImage(tree_img, tree.x - tree.r, tree.y - tree.r, tree.r * 2, tree.r * 2);
       
 
       // Draw spikes
@@ -203,7 +201,7 @@ function getShortestDelta(coord1, coord2, maxCoord) {
         ctx.lineTo(point2X, point2Y); // Base point 2
         ctx.closePath();
 
-        ctx.fillStyle = "darkolivegreen"; // Color of the spikes
+        ctx.fillStyle = "purple"; // Color of the spikes
         ctx.fill();
         // Optional: Add a stroke to spikes
         // ctx.strokeStyle = "darkgreen";
@@ -243,13 +241,9 @@ function getShortestDelta(coord1, coord2, maxCoord) {
       };
 
       const existing = players.find(p => p.username === data.username && !p.isPiece); // Ensure we don't overwrite a piece with a new player
-      if (existing) {
-        Object.assign(existing, player);
-        // Ensure stagnation fields are reset/updated if player re-joins
-        existing.stagnationCounter = 0;
-        existing.lastPosition = { x: player.x, y: player.y };
+      if (!existing) {
+        players.push(player);
       }
-      else players.push(player);
     }
 
     function spawnFood() {
@@ -342,7 +336,7 @@ function getShortestDelta(coord1, coord2, maxCoord) {
           ctx.restore();
 
           ctx.fillStyle = "white";
-          ctx.font = `10px sans-serif`;
+          ctx.font = `${p.r/3} sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.lineWidth = 4;
@@ -408,7 +402,7 @@ function getShortestDelta(coord1, coord2, maxCoord) {
           const dy = player.y - tree.y;
           const distance = Math.hypot(dx, dy);
 
-          if (distance < player.r + tree.r) {
+          if (distance < (player.r / 3) + tree.r && player.r > 50 ) {
             // Collision occurred
             collidedWithTree = true;
 
@@ -417,7 +411,7 @@ function getShortestDelta(coord1, coord2, maxCoord) {
 
             for (let k = 0; k < numPieces; k++) {
               const angle = (k / numPieces) * Math.PI * 2 + (Math.random() - 0.5) * 0.5; // Spread pieces out
-              const pieceRadius = pieceBaseRadius * (0.8 + Math.random() * 0.4); // Slight size variation
+              const pieceRadius = pieceBaseRadius * (0.8 + Math.random() * 0.65); // Slight size variation
 
               players.push({
                   // Standard player properties:
