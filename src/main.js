@@ -42,15 +42,13 @@ const client = new tmi.Client({
 client.connect();
 
 client.on("message", (channel, tags, message, self) => {
-  let cmds = ["!play", "!eat"];
-  message = cmds[Math.floor(Math.random() * cmds.length)];
   if (message.includes("!eat")) {
     let parts = message.split(" ");
     parts[1] = players[Math.floor(Math.random() * players.length)];
     eatTargets[tags.username] = parts[1];
   } else if (message === "!stop") {
     delete eatTargets[tags.username];
-  } else {
+  } else if (message === "!play") {
     play(tags);
   }
 });
