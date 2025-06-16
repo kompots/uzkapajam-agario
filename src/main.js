@@ -733,338 +733,212 @@ function animate() {
       }
     }
 
-    let fleeing = false;
-    let target = null;
-    const forcedTarget = eatTargets[p.username];
-    let targetDist = Infinity;
-    let avoidingSpikes = false;
+// Player state variables for movement decisions each tick
+let fleeing = false;         // True if AI decides player p should flee
+let target = null;           // Target object {dx, dy, dist} if player p is pursuing something
+let avoidingSpikes = false;  // True if spike avoidance maneuver is active for player p
+const forcedTargetUsername = eatTargets[p.username]; // Username of the forced target, if any
+let isPursuingForcedTarget = false; // True if player p is acting on a forced target this tick
 
-    // Spike Tree Avoidance for Small Players
-    if (p.r < 50 && !p.isPiece) {
-      // Only for small, non-piece players
-      if (Math.random() < 0.75) {
-        // 75% chance to actively try to avoid spikes
+// 1. Handle Forced Targets (Highest Priority)
+if (forcedTargetUsername) {
+    const victim = players.find((x) => x.username === forcedTargetUsername);
+    if (victim && victim !== p) {
+        const targetDx = getShortestDelta(p.x, victim.x, canvas.width);
+        const targetDy = getShortestDelta(p.y, victim.y, canvas.height);
+        const dist = Math.hypot(targetDx, targetDy);
+
+        if (dist > 0) {
+            target = { dx: targetDx, dy: targetDy, dist: dist };
+            isPursuingForcedTarget = true;
+            fleeing = false; // Forced target overrides fleeing
+        } else {
+            delete eatTargets[p.username]; // Target is too close or invalid, clear command
+        }
+    } else {
+        delete eatTargets[p.username]; // Victim not found, clear command
+    }
+}
+
+// 2. If not pursuing a forced target, consider AI behaviors (Spike Avoidance, General AI)
+if (!isPursuingForcedTarget) {
+    // 2a. Spike Tree Avoidance (for small, non-piece players)
+    if (p.r < 50 && !p.isPiece && Math.random() < 0.75) {
         let totalRepulsionDx = 0;
         let totalRepulsionDy = 0;
         let spikeNearby = false;
 
         for (const tree of spikedTrees) {
-          const distToTree = Math.hypot(p.x - tree.x, p.y - tree.y);
-          // Danger radius: tree radius + player radius + a buffer (e.g., 1.5 times player's radius, or a minimum of 50px)
-          const dangerRadius = tree.r + p.r + Math.max(p.r * 1.5, 50.0);
+            const distToTree = Math.hypot(p.x - tree.x, p.y - tree.y);
+            const dangerRadius = tree.r + p.r + Math.max(p.r * 1.5, 50.0);
 
-          if (distToTree < dangerRadius && distToTree > 0) {
-            // Player is in the danger zone of this tree
-            const repulsionDx = p.x - tree.x; // Vector from tree to player
-            const repulsionDy = p.y - tree.y;
-
-            // Normalize the repulsion vector from THIS tree
-            const normRepulsionDxFromTree = repulsionDx / distToTree;
-            const normRepulsionDyFromTree = repulsionDy / distToTree;
-
-            // Weight contribution by how deep into danger zone player is (stronger when closer)
-            const weight = (dangerRadius - distToTree) / dangerRadius;
-
-            totalRepulsionDx += normRepulsionDxFromTree * weight;
-            totalRepulsionDy += normRepulsionDyFromTree * weight;
-            spikeNearby = true;
-          }
+            if (distToTree < dangerRadius && distToTree > 0) {
+                const repulsionDx = p.x - tree.x;
+                const repulsionDy = p.y - tree.y;
+                const normRepulsionDxFromTree = repulsionDx / distToTree;
+                const normRepulsionDyFromTree = repulsionDy / distToTree;
+                const weight = (dangerRadius - distToTree) / dangerRadius;
+                totalRepulsionDx += normRepulsionDxFromTree * weight;
+                totalRepulsionDy += normRepulsionDyFromTree * weight;
+                spikeNearby = true;
+            }
         }
 
         if (spikeNearby) {
-          const magnitude = Math.hypot(totalRepulsionDx, totalRepulsionDy);
-          if (magnitude > 0) {
-            // If there's any net repulsion force
-            const finalRepulsionDx = totalRepulsionDx / magnitude; // Normalize the summed repulsion vector
-            const finalRepulsionDy = totalRepulsionDy / magnitude;
+            const magnitude = Math.hypot(totalRepulsionDx, totalRepulsionDy);
+            if (magnitude > 0) {
+                const finalRepulsionDx = totalRepulsionDx / magnitude;
+                const finalRepulsionDy = totalRepulsionDy / magnitude;
+                const avoidanceStrength = 0.1;
 
-            const avoidanceStrength = 0.1; // Strength of the avoidance maneuver
-            p.dx += finalRepulsionDx * avoidanceStrength;
-            p.dy += finalRepulsionDy * avoidanceStrength;
-            avoidingSpikes = true; // Mark that player is actively avoiding spikes this tick
-          }
-        }
-      }
-    }
-    // End of Spike Tree Avoidance Logic
+                p.dx += finalRepulsionDx * avoidanceStrength;
+                p.dy += finalRepulsionDy * avoidanceStrength;
 
-    if (avoidingSpikes) {
-      target = null; // Clear any regular target if actively dodging spikes
-    }
-
-    if (forcedTarget && !avoidingSpikes) {
-      const victim = players.find((x) => x.username === forcedTarget);
-      if (victim && victim !== p) {
-        // Ensure victim exists and is not self
-        // Scenario 1: Player 'p' can eat the 'victim'.
-        if (p.r > victim.r * 1.1) {
-          const targetDx = getShortestDelta(p.x, victim.x, canvas.width);
-          const targetDy = getShortestDelta(p.y, victim.y, canvas.height);
-          const dist = Math.hypot(targetDx, targetDy);
-          if (dist > 0) {
-            target = { dx: targetDx, dy: targetDy, dist: dist };
-          } else {
-            delete eatTargets[p.username];
-          }
-        }
-        // Scenario 2: 'victim' can eat player 'p'. Player 'p' should not attack, and should flee.
-        else if (victim.r > p.r * 1.1) {
-          delete eatTargets[p.username]; // Clear the unsafe forced attack command
-
-          const fleeDx = getShortestDelta(victim.x, p.x, canvas.width); // Shortest path from victim to p
-          const fleeDy = getShortestDelta(victim.y, p.y, canvas.height);
-          const fleeDist = Math.hypot(fleeDx, fleeDy);
-
-          if (fleeDist < 400 && fleeDist > 0) {
-            // Threat is close
-            p.dx += (fleeDx / fleeDist) * 0.05; // Add force in direction away from victim
-            p.dy += (fleeDy / fleeDist) * 0.05;
-            fleeing = true;
-            target = null;
-          }
-        } else {
-          delete eatTargets[p.username]; // Command is ignored as 'p' doesn't have significant size advantage
-        }
-      } else {
-        delete eatTargets[p.username]; // Victim not found or is self, clear command
-      }
-    } else if (!avoidingSpikes) {
-      // --- Start of replacement block for 'else if (!avoidingSpikes)' ---
-      // Player 'p' is not actively avoiding spikes. Now decide other actions.
-      // Variables like 'fleeing', 'target', 'targetDist' are from the scope of the player loop.
-      // 'fleeing' might have been set by spike avoidance if a large player pushed 'p' towards a spike.
-      // Or it will be determined now.
-
-      let potentialAttackTarget = null;
-      let localTargetDist = Infinity; // Used to find the best individual target for player 'p' to attack
-
-      // Step 1: Determine if player 'p' needs to flee from other players.
-      // This loop also identifies the best potential individual player 'p' could attack if not fleeing.
-      if (!fleeing) {
-        // Only check for new fleeing conditions if not already fleeing (e.g. from spike interaction)
-        for (const other of players) {
-          if (p === other) continue; // Skip self
-          // Prevent player 'p' from interacting with its own pieces or its original re-formed self.
-          if (
-            p.isPiece &&
-            other.username === p.originalUsername &&
-            !other.isPiece
-          )
-            continue;
-          if (
-            !p.isPiece &&
-            other.isPiece &&
-            other.originalUsername === p.username
-          )
-            continue;
-
-          const vec_p_to_other_x = getShortestDelta(p.x, other.x, canvas.width);
-          const vec_p_to_other_y = getShortestDelta(
-            p.y,
-            other.y,
-            canvas.height
-          );
-          const dist_p_to_other = Math.hypot(
-            vec_p_to_other_x,
-            vec_p_to_other_y
-          );
-
-          if (dist_p_to_other === 0) continue; // Avoid division by zero
-
-          // Fleeing condition: other is bigger
-          if (other.r > p.r * 1.1 && dist_p_to_other < other.r * 2) {
-            p.dx -= (vec_p_to_other_x / dist_p_to_other) * 0.15; // Move in opposite direction of other
-            p.dy -= (vec_p_to_other_y / dist_p_to_other) * 0.15;
-            fleeing = true;
-            target = null;
-            potentialAttackTarget = null;
-            break;
-          }
-          // Potential attack condition: p is bigger
-          else if (
-            !fleeing &&
-            p.r > other.r * 1.1 &&
-            dist_p_to_other < 500 &&
-            dist_p_to_other < localTargetDist
-          ) {
-            potentialAttackTarget = {
-              dx: vec_p_to_other_x,
-              dy: vec_p_to_other_y,
-              dist: dist_p_to_other,
-            };
-            localTargetDist = dist_p_to_other; // Update closest individual target
-          }
-        }
-      }
-
-      // Step 2: If 'p' is a large player and not fleeing, try to find a cluster of smaller players.
-      let soughtCluster = false;
-      if (!fleeing && p.r >= 100 && !p.isPiece) {
-        const MIN_CLUSTER_SIZE = 2; // Min players to form a notable cluster
-        const CLUSTER_RADIUS_CHECK = p.r * 2.5; // Search radius around a potential cluster seed player
-        const MAX_DIST_TO_CLUSTER_CENTER = p.r * 5; // Max distance 'p' will travel to a cluster's centroid
-        const SMALL_PLAYER_MAX_RADIUS = p.r * 0.6; // Max radius for a player to be part of the target cluster
-
-        let bestClusterCentroid = null;
-        let maxClusterScore = 0;
-
-        for (const potentialCenterPlayer of players) {
-          // Basic filters for a potential seed of a cluster
-          if (
-            potentialCenterPlayer === p ||
-            potentialCenterPlayer.r >= SMALL_PLAYER_MAX_RADIUS ||
-            potentialCenterPlayer.isPiece
-          ) {
-            continue;
-          }
-          // Optimization: If potential seed player is too far to begin with, skip detailed check
-          if (
-            Math.hypot(
-              p.x - potentialCenterPlayer.x,
-              p.y - potentialCenterPlayer.y
-            ) >
-            MAX_DIST_TO_CLUSTER_CENTER + CLUSTER_RADIUS_CHECK
-          ) {
-            continue;
-          }
-
-          let currentClusterMembers = [];
-          let sumX = 0,
-            sumY = 0,
-            totalMassEquivalent = 0; // totalMassEquivalent uses radius as proxy
-
-          for (const memberPlayer of players) {
-            if (
-              memberPlayer === p ||
-              memberPlayer.r >= SMALL_PLAYER_MAX_RADIUS ||
-              memberPlayer.isPiece
-            ) {
-              continue;
+                avoidingSpikes = true;
+                target = null;
             }
-            // Ensure 'p' doesn't target clusters composed of its own pieces
-            if (memberPlayer.originalUsername === p.username) continue;
-
-            if (
-              Math.hypot(
-                potentialCenterPlayer.x - memberPlayer.x,
-                potentialCenterPlayer.y - memberPlayer.y
-              ) < CLUSTER_RADIUS_CHECK
-            ) {
-              currentClusterMembers.push(memberPlayer);
-              sumX += memberPlayer.x * memberPlayer.r;
-              sumY += memberPlayer.y * memberPlayer.r;
-              totalMassEquivalent += memberPlayer.r;
-            }
-          }
-
-          if (
-            currentClusterMembers.length >= MIN_CLUSTER_SIZE &&
-            totalMassEquivalent > 0
-          ) {
-            const centroidX = sumX / totalMassEquivalent;
-            const centroidY = sumY / totalMassEquivalent;
-
-            const dCx = getShortestDelta(p.x, centroidX, canvas.width);
-            const dCy = getShortestDelta(p.y, centroidY, canvas.height);
-            const distToCentroid = Math.hypot(dCx, dCy);
-
-            if (
-              distToCentroid < MAX_DIST_TO_CLUSTER_CENTER &&
-              distToCentroid > 1
-            ) {
-              // Cluster is valid and reachable
-              // Score prioritizes more members, more total 'mass', and closer clusters
-              const score =
-                (currentClusterMembers.length * totalMassEquivalent) /
-                (distToCentroid * distToCentroid + 1);
-              if (score > maxClusterScore) {
-                maxClusterScore = score;
-                bestClusterCentroid = {
-                  dx_to_p: dCx,
-                  dy_to_p: dCy,
-                  dist: distToCentroid,
-                }; // Store the calculated shortest vector
-              }
-            }
-          }
         }
-
-        if (bestClusterCentroid) {
-          target = {
-            dx: bestClusterCentroid.dx_to_p,
-            dy: bestClusterCentroid.dy_to_p,
-            dist: bestClusterCentroid.dist,
-          };
-          soughtCluster = true;
-          potentialAttackTarget = null;
-        }
-      }
-
-      // Step 3: If not fleeing, not targeting a cluster, and a potential individual attack target was found.
-      if (!fleeing && !soughtCluster && potentialAttackTarget) {
-        target = potentialAttackTarget;
-        // targetDist (from outer scope) would ideally be updated here if it were used by subsequent logic,
-        // but 'target' being set is the primary outcome.
-      }
-
-      // Step 4: If not fleeing and no other target has been set (neither cluster nor individual player), seek food.
-      if (!fleeing && !target) {
-        let bestFoodCluster = null;
-        let bestFoodScore = 0;
-
-        for (const f of food) {
-          const foodClusterDensityCheck = food.filter((o) => {
-            const dfx = getShortestDelta(f.x, o.x, canvas.width);
-            const dfy = getShortestDelta(f.y, o.y, canvas.height);
-            return Math.hypot(dfx, dfy) < 80;
-          });
-          const foodDx = getShortestDelta(p.x, f.x, canvas.width);
-          const foodDy = getShortestDelta(p.y, f.y, canvas.height);
-          const distToFood = Math.hypot(foodDx, foodDy);
-
-          if (distToFood < 30 || distToFood === 0) continue;
-          const score = foodClusterDensityCheck.length / distToFood;
-
-          if (score > bestFoodScore) {
-            bestFoodScore = score;
-            bestFoodCluster = foodClusterDensityCheck;
-          }
-        }
-
-        if (bestFoodCluster && bestFoodCluster.length > 0) {
-          const avgX =
-            bestFoodCluster.reduce((sum, f) => sum + f.x, 0) /
-            bestFoodCluster.length;
-          const avgY =
-            bestFoodCluster.reduce((sum, f) => sum + f.y, 0) /
-            bestFoodCluster.length;
-
-          const targetDx = getShortestDelta(p.x, avgX, canvas.width);
-          const targetDy = getShortestDelta(p.y, avgY, canvas.height);
-          const distToFoodCluster = Math.hypot(targetDx, targetDy);
-
-          if (distToFoodCluster > 1) {
-            target = { dx: targetDx, dy: targetDy, dist: distToFoodCluster };
-          }
-        }
-      }
-      // --- End of replacement block ---
     }
 
-    if (target && !fleeing && !avoidingSpikes && target.dist > 1) {
-      const normX = target.dx / target.dist;
-      const normY = target.dy / target.dist;
+    // 2b. General AI (Fleeing, Attacking other players, Food Seeking)
+    if (!avoidingSpikes) {
+        let potentialAttackTarget = null;
+        let localTargetDist = Infinity;
+        let soughtCluster = false;
 
-      if (target.dist < 60) {
-        const correction = 0.05;
-        const align = 0.7;
-        p.dx = p.dx * align + normX * correction;
-        p.dy = p.dy * align + normY * correction;
-      }
+        if (!fleeing) {
+            for (const other of players) {
+                if (p === other) continue;
+                if (p.isPiece && other.username === p.originalUsername && !other.isPiece) continue;
+                if (!p.isPiece && other.isPiece && other.originalUsername === p.username) continue;
 
-      p.dx += normX * 0.015;
-      p.dy += normY * 0.015;
+                const vec_p_to_other_x = getShortestDelta(p.x, other.x, canvas.width);
+                const vec_p_to_other_y = getShortestDelta(p.y, other.y, canvas.height);
+                const dist_p_to_other = Math.hypot(vec_p_to_other_x, vec_p_to_other_y);
+
+                if (dist_p_to_other === 0) continue;
+
+                if (other.r > p.r * 1.1 && dist_p_to_other < other.r * 2) {
+                    p.dx -= (vec_p_to_other_x / dist_p_to_other) * 0.15;
+                    p.dy -= (vec_p_to_other_y / dist_p_to_other) * 0.15;
+                    fleeing = true;
+                    target = null;
+                    potentialAttackTarget = null;
+                    break;
+                } else if (!fleeing && p.r > other.r * 1.1 && dist_p_to_other < 500 && dist_p_to_other < localTargetDist) {
+                    potentialAttackTarget = { dx: vec_p_to_other_x, dy: vec_p_to_other_y, dist: dist_p_to_other };
+                    localTargetDist = dist_p_to_other;
+                }
+            }
+        }
+
+        if (!fleeing && p.r >= 100 && !p.isPiece) {
+            const MIN_CLUSTER_SIZE = 2;
+            const CLUSTER_RADIUS_CHECK = p.r * 2.5;
+            const MAX_DIST_TO_CLUSTER_CENTER = p.r * 5;
+            const SMALL_PLAYER_MAX_RADIUS = p.r * 0.6;
+            let bestClusterCentroid = null;
+            let maxClusterScore = 0;
+
+            for (const potentialCenterPlayer of players) {
+                if (potentialCenterPlayer === p || potentialCenterPlayer.r >= SMALL_PLAYER_MAX_RADIUS || potentialCenterPlayer.isPiece) continue;
+                if (Math.hypot(p.x - potentialCenterPlayer.x, p.y - potentialCenterPlayer.y) > MAX_DIST_TO_CLUSTER_CENTER + CLUSTER_RADIUS_CHECK) continue;
+
+                let currentClusterMembers = [];
+                let sumX = 0, sumY = 0, totalMassEquivalent = 0;
+                for (const memberPlayer of players) {
+                    if (memberPlayer === p || memberPlayer.r >= SMALL_PLAYER_MAX_RADIUS || memberPlayer.isPiece) continue;
+                    if (memberPlayer.originalUsername === p.username) continue;
+                    if (Math.hypot(potentialCenterPlayer.x - memberPlayer.x, potentialCenterPlayer.y - memberPlayer.y) < CLUSTER_RADIUS_CHECK) {
+                        currentClusterMembers.push(memberPlayer);
+                        sumX += memberPlayer.x * memberPlayer.r;
+                        sumY += memberPlayer.y * memberPlayer.r;
+                        totalMassEquivalent += memberPlayer.r;
+                    }
+                }
+
+                if (currentClusterMembers.length >= MIN_CLUSTER_SIZE && totalMassEquivalent > 0) {
+                    const centroidX = sumX / totalMassEquivalent;
+                    const centroidY = sumY / totalMassEquivalent;
+                    const dCx = getShortestDelta(p.x, centroidX, canvas.width);
+                    const dCy = getShortestDelta(p.y, centroidY, canvas.height);
+                    const distToCentroid = Math.hypot(dCx, dCy);
+                    if (distToCentroid < MAX_DIST_TO_CLUSTER_CENTER && distToCentroid > 1) {
+                        const score = (currentClusterMembers.length * totalMassEquivalent) / (distToCentroid * distToCentroid + 1);
+                        if (score > maxClusterScore) {
+                            maxClusterScore = score;
+                            bestClusterCentroid = { dx_to_p: dCx, dy_to_p: dCy, dist: distToCentroid };
+                        }
+                    }
+                }
+            }
+            if (bestClusterCentroid) {
+                target = { dx: bestClusterCentroid.dx_to_p, dy: bestClusterCentroid.dy_to_p, dist: bestClusterCentroid.dist };
+                soughtCluster = true;
+                potentialAttackTarget = null;
+            }
+        }
+
+        if (!fleeing && !soughtCluster && potentialAttackTarget) {
+            target = potentialAttackTarget;
+        }
+
+        if (!fleeing && !target) {
+            let bestFoodCluster = null;
+            let bestFoodScore = 0;
+            for (const f of food) {
+                const foodClusterDensityCheck = food.filter((o) => {
+                    const dfx = getShortestDelta(f.x, o.x, canvas.width);
+                    const dfy = getShortestDelta(f.y, o.y, canvas.height);
+                    return Math.hypot(dfx, dfy) < 80;
+                });
+                const foodDx = getShortestDelta(p.x, f.x, canvas.width);
+                const foodDy = getShortestDelta(p.y, f.y, canvas.height);
+                const distToFood = Math.hypot(foodDx, foodDy);
+                if (distToFood < 30 || distToFood === 0) continue;
+                const score = foodClusterDensityCheck.length / distToFood;
+                if (score > bestFoodScore) {
+                    bestFoodScore = score;
+                    bestFoodCluster = foodClusterDensityCheck;
+                }
+            }
+            if (bestFoodCluster && bestFoodCluster.length > 0) {
+                const avgX = bestFoodCluster.reduce((sum, f) => sum + f.x, 0) / bestFoodCluster.length;
+                const avgY = bestFoodCluster.reduce((sum, f) => sum + f.y, 0) / bestFoodCluster.length;
+                const targetDx = getShortestDelta(p.x, avgX, canvas.width);
+                const targetDy = getShortestDelta(p.y, avgY, canvas.height);
+                const distToFoodCluster = Math.hypot(targetDx, targetDy);
+                if (distToFoodCluster > 1) {
+                    target = { dx: targetDx, dy: targetDy, dist: distToFoodCluster };
+                }
+            }
+        }
     }
+}
+
+// 3. Movement Application
+if (target && !fleeing && target.dist > 1) {
+    const normX = target.dx / target.dist;
+    const normY = target.dy / target.dist;
+
+    if (isPursuingForcedTarget) {
+        const forcedAccel = 0.025;
+        p.dx += normX * forcedAccel;
+        p.dy += normY * forcedAccel;
+        p.dx *= 0.95;
+        p.dy *= 0.95;
+    } else {
+        if (target.dist < 60) {
+            const correction = 0.05;
+            const align = 0.7;
+            p.dx = p.dx * align + normX * correction;
+            p.dy = p.dy * align + normY * correction;
+        }
+        const standardAccel = 0.015;
+        p.dx += normX * standardAccel;
+        p.dy += normY * standardAccel;
+    }
+}
 
     const speed = 1 * (30 / p.r);
     p.dx = Math.max(-speed, Math.min(speed, p.dx));
