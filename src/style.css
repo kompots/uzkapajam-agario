@@ -1,0 +1,29 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  width: 100vw;
+  height: 100vh;
+}
+
+canvas {
+  display: block;
+}
+
+#winner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 64px;
+  font-family: sans-serif;
+  text-align: center;
+  padding: 30px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 20px;
+  display: none;
+  z-index: 10;
+}
