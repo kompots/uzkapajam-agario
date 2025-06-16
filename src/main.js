@@ -37,15 +37,25 @@ const client = new tmi.Client({
     secure: true,
     reconnect: true
   },
-  channels: ['uzkapajam']
+  channels: ['sodapoppin']
 });
 
 client.connect();
 
 client.on('message', (channel, tags, message, self) => {
-  console.log(tags)
-  play(tags)
-  
+  let cmds = ["!play", "!eat"]
+  message = cmds[Math.floor(Math.random() * cmds.length)];
+  console.log("Executed : ", message , " for ", tags.username)
+    if (message.includes("!eat")) {
+      let parts = message.split(' ');
+      parts[1] = players[Math.floor(Math.random() * players.length)]
+      eatTargets[tags.username] = parts[1];
+    } else if (message === "!stop") {
+      delete eatTargets[tags.username];
+    }
+    else if (message === "!play") {
+      play(tags)
+    }
 });
 
 
@@ -66,7 +76,7 @@ client.on('message', (channel, tags, message, self) => {
     let gameResetting = false;
 
     const NUM_SPIKED_TREES = 5;
-    const SPIKED_TREE_RADIUS = 50;
+    const SPIKED_TREE_RADIUS = 20;
     const SPIKED_TREE_RESPAWN_DELAY = 15000; // 15 seconds
     let lastTreeRespawnTime = 0;
 
@@ -136,17 +146,23 @@ client.on('message', (channel, tags, message, self) => {
 
     function drawSpikedTree(tree) {
       const numSpikes = 12; // Number of spikes around the tree
-      const spikeLength = tree.r * 0.5; // Length of the spikes
+      const spikeLength = tree.r * 0.2; // Length of the spikes
       // const spikeBaseWidth = tree.r * 0.3; // Width of the base of each spike // Not used in current spike drawing
 
       // Draw the main body of the tree (circle)
       ctx.beginPath();
       ctx.arc(tree.x, tree.y, tree.r, 0, Math.PI * 2);
-      ctx.fillStyle = "saddlebrown"; // Or any other tree-like color
+      ctx.fillStyle = "black"; // Or any other tree-like color
       ctx.fill();
-      ctx.strokeStyle = "darkgreen";
+      ctx.strokeStyle = "red";
       ctx.lineWidth = 3;
       ctx.stroke();
+
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = 'https://i.imgur.com/i7UkBx6.png'
+      ctx.drawImage(img, tree.x - tree.r, tree.y - tree.r, tree.r * 2, tree.r * 2);
+      
 
       // Draw spikes
       for (let i = 0; i < numSpikes; i++) {
@@ -581,7 +597,7 @@ client.on('message', (channel, tags, message, self) => {
           const normY = target.dy / target.dist;
 
           if (target.dist < 60) {
-            const correction = 0.05;
+            const correction = 1;
             const align = 0.7;
             p.dx = p.dx * align + normX * correction;
             p.dy = p.dy * align + normY * correction;
@@ -591,7 +607,7 @@ client.on('message', (channel, tags, message, self) => {
           p.dy += normY * 0.015;
         }
 
-        const speed = 2 * (30 / p.r);
+        const speed = 1 * (30 / p.r);
         p.dx = Math.max(-speed, Math.min(speed, p.dx));
         p.dy = Math.max(-speed, Math.min(speed, p.dy));
 
