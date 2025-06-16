@@ -37,15 +37,25 @@ const client = new tmi.Client({
     secure: true,
     reconnect: true
   },
-  channels: ['uzkapajam']
+  channels: ['sodapoppin']
 });
 
 client.connect();
 
 client.on('message', (channel, tags, message, self) => {
-  console.log(tags)
-  play(tags)
-  
+  let cmds = ["!play"]
+  message = cmds[Math.floor(Math.random() * cmds.length)];
+  console.log("Executed : ", message , " for ", tags.username)
+    if (message.includes("!eat")) {
+      let parts = message.split(' ');
+      parts[1] = players[Math.floor(Math.random() * players.length)]
+      eatTargets[tags.username] = parts[1];
+    } else if (message === "!stop") {
+      delete eatTargets[tags.username];
+    }
+    else if (message === "!play") {
+      play(tags)
+    }
 });
 
 
@@ -71,33 +81,33 @@ client.on('message', (channel, tags, message, self) => {
     resizeCanvas();
 
   async function play(data) {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      getUserProfilePicture(data.username).then((data) => {
-        img.src = data
-      });
+    getUserProfilePicture(data.username).then((avatar_url) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = avatar_url
+        const radius = 30;
+        let x, y, safe = false;
+        for (let attempts = 0; attempts < 100 && !safe; attempts++) {
+          x = Math.random() * (canvas.width - 2 * radius) + radius;
+          y = Math.random() * (canvas.height - 2 * radius) + radius;
+          safe = !players.some(p => Math.hypot(p.x - x, p.y - y) < p.r + radius + 10);
+        }
 
-      const radius = 30;
-      let x, y, safe = false;
-      for (let attempts = 0; attempts < 100 && !safe; attempts++) {
-        x = Math.random() * (canvas.width - 2 * radius) + radius;
-        y = Math.random() * (canvas.height - 2 * radius) + radius;
-        safe = !players.some(p => Math.hypot(p.x - x, p.y - y) < p.r + radius + 10);
-      }
+        const player = {
+          username: data.username,
+          display_name: data.display_name || data.username,
+          x, y,
+          dx: 0, dy: 0,
+          r: radius,
+          targetR: radius,
+          avatar: img
+        };
 
-      const player = {
-        username: data.username,
-        display_name: data.display_name || data.username,
-        x, y,
-        dx: 0, dy: 0,
-        r: radius,
-        targetR: radius,
-        avatar: img
-      };
-
-      const existing = players.find(p => p.username === data.username);
-      if (existing) Object.assign(existing, player);
-      else players.push(player);
+        const existing = players.find(p => p.username === data.username);
+        if (!existing) {
+          players.push(player);
+        }
+      });      
     }
 
     function spawnFood() {
@@ -112,6 +122,10 @@ client.on('message', (channel, tags, message, self) => {
           color: colors[Math.floor(Math.random() * colors.length)]
         });
       }
+    }
+
+    function isImageBroken(img) {
+      return !img.complete || img.naturalWidth === 0;
     }
 
     function drawPlayer(p) {
@@ -133,9 +147,9 @@ client.on('message', (channel, tags, message, self) => {
           ctx.beginPath();
           ctx.arc(drawX, drawY, p.r, 0, Math.PI * 2);
           ctx.clip();
-
-          // Draw avatar
-          ctx.drawImage(p.avatar, drawX - p.r, drawY - p.r, p.r * 2, p.r * 2);
+          if (!isImageBroken(p.avatar)) {
+            ctx.drawImage(p.avatar, drawX - p.r, drawY - p.r, p.r * 2, p.r * 2);
+          }
 
           // Create radial gradient for blur-like mask
           const gradient = ctx.createRadialGradient(drawX, drawY, 0, drawX, drawY, p.r);
@@ -148,7 +162,7 @@ client.on('message', (channel, tags, message, self) => {
           ctx.restore();
 
           ctx.fillStyle = "white";
-          ctx.font = `10px sans-serif`;
+          ctx.font = `${p.r/3}px sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.lineWidth = 4;
@@ -262,7 +276,7 @@ client.on('message', (channel, tags, message, self) => {
           const normY = target.dy / target.dist;
 
           if (target.dist < 60) {
-            const correction = 0.05;
+            const correction = 1;
             const align = 0.7;
             p.dx = p.dx * align + normX * correction;
             p.dy = p.dy * align + normY * correction;
@@ -272,7 +286,7 @@ client.on('message', (channel, tags, message, self) => {
           p.dy += normY * 0.015;
         }
 
-        const speed = 2 * (30 / p.r);
+        const speed = 1 * (30 / p.r);
         p.dx = Math.max(-speed, Math.min(speed, p.dx));
         p.dy = Math.max(-speed, Math.min(speed, p.dy));
 
