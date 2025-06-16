@@ -36,7 +36,7 @@ const client = new tmi.Client({
     secure: true,
     reconnect: true,
   },
-  channels: ["sodapoppin"],
+  channels: ["uzkapajam"],
 });
 
 client.connect();
