@@ -37,25 +37,15 @@ const client = new tmi.Client({
     secure: true,
     reconnect: true
   },
-  channels: ['sodapoppin']
+  channels: ['uzkapajam']
 });
 
 client.connect();
 
 client.on('message', (channel, tags, message, self) => {
-  let cmds = ["!play", "!eat"]
-  message = cmds[Math.floor(Math.random() * cmds.length)];
-  console.log("Executed : ", message , " for ", tags.username)
-    if (message.includes("!eat")) {
-      let parts = message.split(' ');
-      parts[1] = players[Math.floor(Math.random() * players.length)]
-      eatTargets[tags.username] = parts[1];
-    } else if (message === "!stop") {
-      delete eatTargets[tags.username];
-    }
-    else if (message === "!play") {
-      play(tags)
-    }
+  console.log(tags)
+  play(tags)
+
 });
 
 
@@ -76,7 +66,7 @@ client.on('message', (channel, tags, message, self) => {
     let gameResetting = false;
 
     const NUM_SPIKED_TREES = 5;
-    const SPIKED_TREE_RADIUS = 20;
+    const SPIKED_TREE_RADIUS = 50;
     const SPIKED_TREE_RESPAWN_DELAY = 15000; // 15 seconds
     let lastTreeRespawnTime = 0;
 
@@ -146,23 +136,17 @@ client.on('message', (channel, tags, message, self) => {
 
     function drawSpikedTree(tree) {
       const numSpikes = 12; // Number of spikes around the tree
-      const spikeLength = tree.r * 0.2; // Length of the spikes
+      const spikeLength = tree.r * 0.5; // Length of the spikes
       // const spikeBaseWidth = tree.r * 0.3; // Width of the base of each spike // Not used in current spike drawing
 
       // Draw the main body of the tree (circle)
       ctx.beginPath();
       ctx.arc(tree.x, tree.y, tree.r, 0, Math.PI * 2);
-      ctx.fillStyle = "black"; // Or any other tree-like color
+      ctx.fillStyle = "saddlebrown"; // Or any other tree-like color
       ctx.fill();
-      ctx.strokeStyle = "red";
+      ctx.strokeStyle = "darkgreen";
       ctx.lineWidth = 3;
       ctx.stroke();
-
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = 'https://i.imgur.com/i7UkBx6.png'
-      ctx.drawImage(img, tree.x - tree.r, tree.y - tree.r, tree.r * 2, tree.r * 2);
-      
 
       // Draw spikes
       for (let i = 0; i < numSpikes; i++) {
@@ -220,7 +204,10 @@ client.on('message', (channel, tags, message, self) => {
         avatar: img,
         isPiece: false, // Explicitly set for normal players
         originalUsername: data.username, // Or null, let's use own username for consistency
-        spawnTime: Date.now() // Can be useful for all players
+        spawnTime: Date.now(), // Can be useful for all players
+        lastX: x, // Initialize for anti-stuck
+        lastY: y, // Initialize for anti-stuck
+        stuckFrames: 0 // Initialize for anti-stuck
       };
 
       const existing = players.find(p => p.username === data.username && !p.isPiece); // Ensure we don't overwrite a piece with a new player
@@ -229,16 +216,45 @@ client.on('message', (channel, tags, message, self) => {
     }
 
     function spawnFood() {
-      const margin = 40;
+      const margin = 40; // Original margin for food spawning area
+      const foodRadius = 4;
+      const foodBuffer = 10; // Additional buffer around trees
+      const MAX_SPAWN_ATTEMPTS_PER_ITEM = 20;
+
       while (food.length < 120) {
-        food.push({
-          x: Math.random() * (canvas.width - 2 * margin) + margin,
-          y: Math.random() * (canvas.height - 2 * margin) + margin,
-          r: 4,
-          dx: (Math.random() - 0.5) * 0.3,
-          dy: (Math.random() - 0.5) * 0.3,
-          color: colors[Math.floor(Math.random() * colors.length)]
-        });
+        let x, y;
+        let validPosition = false;
+        let attempts = 0;
+
+        do {
+          x = Math.random() * (canvas.width - 2 * margin) + margin;
+          y = Math.random() * (canvas.height - 2 * margin) + margin;
+          validPosition = true;
+
+          for (const tree of spikedTrees) {
+            const distToTree = Math.hypot(x - tree.x, y - tree.y);
+            if (distToTree < tree.r + foodRadius + foodBuffer) {
+              validPosition = false;
+              break;
+            }
+          }
+          attempts++;
+        } while (!validPosition && attempts < MAX_SPAWN_ATTEMPTS_PER_ITEM);
+
+        if (validPosition) {
+          food.push({
+            x,
+            y,
+            r: foodRadius,
+            dx: (Math.random() - 0.5) * 0.3,
+            dy: (Math.random() - 0.5) * 0.3,
+            color: colors[Math.floor(Math.random() * colors.length)]
+          });
+        } else {
+          // Optional: console.warn("Could not find a valid position for a food item after several attempts.");
+          // Break if we can't place food, to avoid an infinite loop if the map is too full.
+          break;
+        }
       }
     }
 
@@ -384,7 +400,10 @@ client.on('message', (channel, tags, message, self) => {
                   // New properties for pieces:
                   isPiece: true,
                   originalUsername: player.username, // Link to the original player
-                  spawnTime: Date.now() // For re-merging logic later
+                  spawnTime: Date.now(), // For re-merging logic later
+                  lastX: player.x + (player.r / 2) * Math.cos(angle), // Initialize for anti-stuck
+                  lastY: player.y + (player.r / 2) * Math.sin(angle), // Initialize for anti-stuck
+                  stuckFrames: 0 // Initialize for anti-stuck
                 });
             }
 
@@ -488,7 +507,10 @@ client.on('message', (channel, tags, message, self) => {
             avatar: originalPlayerAvatar,
             isPiece: false, // Reformed player is not a piece
             originalUsername: username, // Set to its own username
-            spawnTime: Date.now() // New spawn time for the merged entity
+            spawnTime: Date.now(), // New spawn time for the merged entity
+            lastX: mergedPlayerX, // Initialize for anti-stuck
+            lastY: mergedPlayerY, // Initialize for anti-stuck
+            stuckFrames: 0 // Initialize for anti-stuck
           });
         }
       }
@@ -502,6 +524,28 @@ client.on('message', (channel, tags, message, self) => {
       }
 
       for (const p of players) {
+        // ---- START SPIKE AVOIDANCE LOGIC ----
+        if (p.r < 50 && !p.isPiece) {
+          const AWARENESS_RADIUS = 150;
+          const AVOIDANCE_PROBABILITY = 0.7;
+          const AVOIDANCE_STRENGTH = 0.08;
+
+          if (Math.random() < AVOIDANCE_PROBABILITY) {
+            for (const tree of spikedTrees) {
+              const dxToTree = tree.x - p.x;
+              const dyToTree = tree.y - p.y;
+              const distToTree = Math.hypot(dxToTree, dyToTree);
+
+              if (distToTree < AWARENESS_RADIUS && distToTree > 0) {
+                const forceMagnitude = (1 - (distToTree / AWARENESS_RADIUS)) * AVOIDANCE_STRENGTH;
+                p.dx -= (dxToTree / distToTree) * forceMagnitude;
+                p.dy -= (dyToTree / distToTree) * forceMagnitude;
+              }
+            }
+          }
+        }
+        // ---- END SPIKE AVOIDANCE LOGIC ----
+
         if (p.isPiece) {
           const parentExists = players.some(parent => parent.username === p.originalUsername && !parent.isPiece);
           if (!parentExists) {
@@ -522,68 +566,248 @@ client.on('message', (channel, tags, message, self) => {
                   centroidX /= totalSiblingEffectiveMass;
                   centroidY /= totalSiblingEffectiveMass;
 
-                  const attractionStrength = 0.0002;
+                  // const attractionStrength = 0.001; // Value is now part of moveSpeedFactor
                   const dxToCentroid = centroidX - p.x;
                   const dyToCentroid = centroidY - p.y;
                   const distanceToCentroid = Math.hypot(dxToCentroid, dyToCentroid);
 
-                  if (distanceToCentroid > p.r) {
-                      p.dx += (dxToCentroid / distanceToCentroid) * attractionStrength * Math.min(distanceToCentroid, 200);
-                      p.dy += (dyToCentroid / distanceToCentroid) * attractionStrength * Math.min(distanceToCentroid, 200);
+                  if (distanceToCentroid > p.r) { // Only target if not already effectively at the centroid
+                    // Set target for piece cohesion, this will be picked up by general target movement logic
+                    // No direct modification to p.dx/p.dy here anymore
+                    target = { dx: dxToCentroid, dy: dyToCentroid, dist: distanceToCentroid, type: 'group_centroid' };
                   }
               }
             }
           }
         }
+        // Note: 'target' might be set by piece cohesion logic above.
+        // Subsequent logic (fleeing, individual targeting, cluster hunting) needs to respect if 'target' is already set by a piece's own cohesion.
+        // However, fleeing should probably override piece cohesion.
 
         let fleeing = false;
-        let target = null;
-        const forcedTarget = eatTargets[p.username];
-        let targetDist = Infinity;
+        // let target = null; // 'target' is already declared and potentially set by piece logic,
+                             // and will be evaluated by subsequent general target following logic.
+        const forcedTarget = eatTargets[p.username]; // This is for external commands, should be checked early.
+        let targetDist = Infinity; // Used for comparing potential individual targets
 
+        // Handle forced target first (e.g. from external command)
         if (forcedTarget) {
           const victim = players.find(x => x.username === forcedTarget);
           if (victim) {
             const dx = victim.x - p.x;
             const dy = victim.y - p.y;
             const dist = Math.hypot(dx, dy);
-            target = { dx, dy, dist };
+            target = { dx, dy, dist, type: 'forced_player' }; // Ensure type is set
           }
-        } else {
-          for (const other of players) {
-            if (p === other) continue;
-            const dx = other.x - p.x;
-            const dy = other.y - p.y;
-            const dist = Math.hypot(dx, dy);
-            if (other.r > p.r * 1.1 && dist < 400) {
-              p.dx -= (dx / dist) * 0.05;
-              p.dy -= (dy / dist) * 0.05;
-              fleeing = true;
-            } else if (p.r > other.r * 1.1 && dist < 500 && dist < targetDist) {
-              target = { dx, dy, dist };
-              targetDist = dist;
-            }
-          }
+        }
 
-          if (!fleeing && !target) {
-            let bestCluster = null;
-            let bestScore = 0;
+        // Fleeing logic (should override other targeting if fleeing is true)
+        for (const other of players) {
+          if (p === other) continue;
+          const dx = other.x - p.x;
+          const dy = other.y - p.y;
+          const dist = Math.hypot(dx, dy);
+          if (other.r > p.r * 1.1 && dist < 400) { // Flee if other is bigger and close
+            p.dx -= (dx / dist) * 0.05; // Direct modification to dx/dy for fleeing
+            p.dy -= (dy / dist) * 0.05;
+            fleeing = true; // Set fleeing status
+            target = null; // Clear any previous target if now fleeing
+            break; // Prioritize fleeing above all else
+          }
+        }
+
+        // ---- START CLOSE FOOD DEVIATION FOR PIECES ----
+        // This is an additive nudge, does not set 'target', happens if piece is not fleeing.
+        // It can co-exist with a 'group_centroid' target (already set from piece cohesion logic).
+        if (p.isPiece && !fleeing) {
+          const parentExists = players.some(parent => parent.username === p.originalUsername && !parent.isPiece);
+          if (!parentExists) {
+            const VERY_CLOSE_FOOD_DISTANCE_FACTOR = p.r * 1.0 + 10;
+            const CLOSE_FOOD_NUDGE_STRENGTH = 0.03;
+
+            let closestVeryNearFood = null;
+            let minDistToVeryNearFood = VERY_CLOSE_FOOD_DISTANCE_FACTOR;
 
             for (const f of food) {
-              const cluster = food.filter(o => Math.hypot(f.x - o.x, f.y - o.y) < 80);
-              const dist = Math.hypot(f.x - p.x, f.y - p.y);
-              if (dist < 30) continue;
-              const score = cluster.length / dist;
-
-              if (score > bestScore) {
-                bestScore = score;
-                bestCluster = cluster;
+              const distToFood = Math.hypot(f.x - p.x, f.y - p.y);
+              if (distToFood < minDistToVeryNearFood) {
+                minDistToVeryNearFood = distToFood;
+                closestVeryNearFood = f;
               }
             }
 
-            if (bestCluster && bestCluster.length > 0) {
-              const avgX = bestCluster.reduce((sum, f) => sum + f.x, 0) / bestCluster.length;
-              const avgY = bestCluster.reduce((sum, f) => sum + f.y, 0) / bestCluster.length;
+            if (closestVeryNearFood) {
+              const dxToFood = closestVeryNearFood.x - p.x;
+              const dyToFood = closestVeryNearFood.y - p.y;
+              if (minDistToVeryNearFood > 0) { // Avoid division by zero if food is exactly at player center
+                p.dx += (dxToFood / minDistToVeryNearFood) * CLOSE_FOOD_NUDGE_STRENGTH;
+                p.dy += (dyToFood / minDistToVeryNearFood) * CLOSE_FOOD_NUDGE_STRENGTH;
+              }
+            }
+          }
+        }
+        // ---- END CLOSE FOOD DEVIATION FOR PIECES ----
+
+        // If not fleeing and no forced target, then other AI targeting logic applies
+        if (!fleeing && !target) {
+          // Check for individual smaller player targets (original direct targeting logic)
+          for (const other of players) {
+            if (p === other) continue;
+             // Added check to ensure pieces of same original player don't target each other for eating
+            if (p.isPiece && other.isPiece && p.originalUsername === other.originalUsername) continue;
+
+            const dx = other.x - p.x;
+            const dy = other.y - p.y;
+            const dist = Math.hypot(dx, dy);
+
+            // Modified aggressive target selection
+            if (p.r > other.r * 1.1) { // If p can eat other
+              const otherCanEatP = other.r > p.r * 1.1; // Check if 'other' is also a threat to 'p'
+
+              if (!otherCanEatP) { // Only target 'other' if 'other' is not a mutual threat
+                if (dist < 500 && dist < targetDist) { // And 'other' is in range and closer than previous target
+                  target = { dx, dy, dist, type: 'individual_player' };
+                  targetDist = dist;
+                }
+              }
+            }
+          }
+
+          // ---- START LARGE PLAYER SEEK CLUSTER LOGIC ----
+          // This runs if still no individual target from above, and player is large
+          if (p.r >= 100 && !target) {
+            const MAX_TARGETS_FOR_CLUSTERING = 30;
+            const CLUSTER_PROXIMITY = p.r * 3;
+            const MIN_CLUSTER_SIZE_PLAYERS = 2;
+            const TARGET_SIZE_RATIO = 0.75;
+
+            const potentialTargets = [];
+            for (const other of players) {
+              if (other === p || (other.isPiece && p.isPiece && other.originalUsername === p.originalUsername) || (other.isPiece && other.originalUsername === p.username) || (p.isPiece && p.originalUsername === other.username) ) continue;
+              if (other.r < p.r * TARGET_SIZE_RATIO) {
+                potentialTargets.push(other);
+              }
+            }
+
+            if (potentialTargets.length >= MIN_CLUSTER_SIZE_PLAYERS) {
+              potentialTargets.sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y));
+              const nearbyTargets = potentialTargets.slice(0, MAX_TARGETS_FOR_CLUSTERING);
+
+              let bestCluster = null;
+              let maxClusterScore = 0;
+
+              const possibleClusters = [];
+              const processedTargets = new Array(nearbyTargets.length).fill(false);
+
+              for (let i = 0; i < nearbyTargets.length; i++) {
+                if (processedTargets[i]) continue;
+                const currentCluster = [nearbyTargets[i]];
+                processedTargets[i] = true;
+                const queue = [nearbyTargets[i]];
+
+                while (queue.length > 0) {
+                  const currentMember = queue.shift();
+                  for (let j = 0; j < nearbyTargets.length; j++) {
+                    if (processedTargets[j] || nearbyTargets[j] === currentMember) continue;
+                    if (Math.hypot(currentMember.x - nearbyTargets[j].x, currentMember.y - nearbyTargets[j].y) < CLUSTER_PROXIMITY) {
+                      currentCluster.push(nearbyTargets[j]);
+                      processedTargets[j] = true;
+                      queue.push(nearbyTargets[j]);
+                    }
+                  }
+                }
+                if (currentCluster.length >= MIN_CLUSTER_SIZE_PLAYERS) {
+                  possibleClusters.push(currentCluster);
+                }
+              }
+
+              for (const cluster of possibleClusters) {
+                let clusterRadiusSum = 0;
+                let clusterCentroidX = 0;
+                let clusterCentroidY = 0;
+                for (const member of cluster) {
+                  clusterRadiusSum += member.r;
+                  clusterCentroidX += member.x;
+                  clusterCentroidY += member.y;
+                }
+                clusterCentroidX /= cluster.length;
+                clusterCentroidY /= cluster.length;
+                const distToCluster = Math.hypot(clusterCentroidX - p.x, clusterCentroidY - p.y);
+
+                const score = clusterRadiusSum / (distToCluster < 1 ? 1 : distToCluster);
+
+                if (score > maxClusterScore) {
+                  maxClusterScore = score;
+                  bestCluster = { centroidX: clusterCentroidX, centroidY: clusterCentroidY, members: cluster, dist: distToCluster };
+                }
+              }
+
+              if (bestCluster) {
+                const dxToCluster = bestCluster.centroidX - p.x;
+                const dyToCluster = bestCluster.centroidY - p.y;
+                target = { dx: dxToCluster, dy: dyToCluster, dist: bestCluster.dist };
+                // console.log(`Player ${p.username} targeting cluster at ${bestCluster.centroidX}, ${bestCluster.centroidY}`);
+              }
+            }
+          }
+          // ---- END LARGE PLAYER SEEK CLUSTER LOGIC ----
+
+          // Fallback to food seeking if no player/cluster target and not fleeing
+          // ---- END LARGE PLAYER SEEK CLUSTER LOGIC ----
+
+          // ---- START CLOSE FOOD DEVIATION FOR PIECES ----
+          // This is an additive nudge, does not set 'target', happens if piece is not fleeing.
+          // It can co-exist with a 'group_centroid' target.
+          if (p.isPiece) { // Only for pieces
+            const parentExists = players.some(parent => parent.username === p.originalUsername && !parent.isPiece);
+            if (!parentExists) { // Only if parent hasn't reformed
+              const VERY_CLOSE_FOOD_DISTANCE_FACTOR = p.r * 1.0 + 10;
+              const CLOSE_FOOD_NUDGE_STRENGTH = 0.03;
+
+              let closestVeryNearFood = null;
+              let minDistToVeryNearFood = VERY_CLOSE_FOOD_DISTANCE_FACTOR;
+
+              for (const f of food) {
+                const distToFood = Math.hypot(f.x - p.x, f.y - p.y);
+                if (distToFood < minDistToVeryNearFood) {
+                  minDistToVeryNearFood = distToFood;
+                  closestVeryNearFood = f;
+                }
+              }
+
+              if (closestVeryNearFood) {
+                const dxToFood = closestVeryNearFood.x - p.x;
+                const dyToFood = closestVeryNearFood.y - p.y;
+                p.dx += (dxToFood / minDistToVeryNearFood) * CLOSE_FOOD_NUDGE_STRENGTH;
+                p.dy += (dyToFood / minDistToVeryNearFood) * CLOSE_FOOD_NUDGE_STRENGTH;
+              }
+            }
+          }
+          // ---- END CLOSE FOOD DEVIATION FOR PIECES ----
+
+          // Fallback to general food seeking if no other target was set by player/cluster logic
+          // (and not fleeing, and piece cohesion didn't set a 'group_centroid' target if 'target' is still null here)
+          if (!target) {
+            let bestFoodCluster = null;
+            let bestFoodScore = 0;
+
+            for (const f of food) {
+              const foodCluster = food.filter(o => Math.hypot(f.x - o.x, f.y - o.y) < 80);
+              const distToFood = Math.hypot(f.x - p.x, f.y - p.y);
+              // For pieces, allow targeting very close food even if it's their only option.
+              // For non-pieces, they might ignore very close food if they aren't specifically targeting it.
+              if (distToFood < 30 && !p.isPiece && !(target && target.type === 'food')) continue;
+              const score = foodCluster.length / distToFood;
+
+              if (score > bestFoodScore) {
+                bestFoodScore = score;
+                bestFoodCluster = foodCluster;
+              }
+            }
+
+            if (bestFoodCluster && bestFoodCluster.length > 0) {
+              const avgX = bestFoodCluster.reduce((sum, f) => sum + f.x, 0) / bestFoodCluster.length;
+              const avgY = bestFoodCluster.reduce((sum, f) => sum + f.y, 0) / bestFoodCluster.length;
               const dx = avgX - p.x;
               const dy = avgY - p.y;
               const dist = Math.hypot(dx, dy);
@@ -596,18 +820,27 @@ client.on('message', (channel, tags, message, self) => {
           const normX = target.dx / target.dist;
           const normY = target.dy / target.dist;
 
-          if (target.dist < 60) {
-            const correction = 1;
+          if (target.dist < 60) { // This close-range logic might need adjustment or to be conditional on target.type
+            const correction = 0.05;
             const align = 0.7;
+            // If it's a group_centroid target, maybe don't apply this aggressive alignment?
+            // For now, let it apply to all targets that get very close.
             p.dx = p.dx * align + normX * correction;
             p.dy = p.dy * align + normY * correction;
           }
 
-          p.dx += normX * 0.015;
-          p.dy += normY * 0.015;
+          // Determine movement speed factor based on target type
+          let moveSpeedFactor = 0.015; // Default speed factor for chasing players/food
+          if (target.type === 'group_centroid') {
+            moveSpeedFactor = 0.010; // Gentler speed factor for moving with group
+          }
+          const speedInfluence = moveSpeedFactor * Math.min(target.dist, 200); // Cap influence
+          p.dx += normX * speedInfluence;
+          p.dy += normY * speedInfluence;
+
         }
 
-        const speed = 1 * (30 / p.r);
+        const speed = 2 * (30 / p.r);
         p.dx = Math.max(-speed, Math.min(speed, p.dx));
         p.dy = Math.max(-speed, Math.min(speed, p.dy));
 
@@ -617,7 +850,27 @@ client.on('message', (channel, tags, message, self) => {
         p.x = (p.x + canvas.width) % canvas.width;
         p.y = (p.y + canvas.height) % canvas.height;
 
+        // Anti-stuck mechanism
+        const positionChangeThreshold = 0.1;
+        const stuckFrameTrigger = 10;
+        const nudgeStrength = 0.2;
 
+        if (typeof p.lastX === 'number' && typeof p.lastY === 'number') {
+          if (Math.hypot(p.x - p.lastX, p.y - p.lastY) < positionChangeThreshold) {
+            p.stuckFrames = (p.stuckFrames || 0) + 1;
+          } else {
+            p.stuckFrames = 0;
+          }
+
+          if (p.stuckFrames >= stuckFrameTrigger) {
+            p.dx += (Math.random() - 0.5) * nudgeStrength;
+            p.dy += (Math.random() - 0.5) * nudgeStrength;
+            p.stuckFrames = 0;
+            // console.log(`Player ${p.username} was stuck, nudged.`);
+          }
+        }
+        p.lastX = p.x;
+        p.lastY = p.y;
       }
 
       for (const p of players) {
