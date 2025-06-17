@@ -25,6 +25,7 @@ const food = [];
 const spikedTrees = [];
 const eatTargets = {};
 const particles = [];
+const particles_other = [];
 const colors = [
   "red",
   "blue",
@@ -67,7 +68,7 @@ client.on("message", (channel, tags, message, self) => {
       play(tags);
     }
   }
-
+  // play(tags);
   // if (Math.floor(Math.random() * 10) + 1 > 7) {
   //   if (players.length > 2) {
   //     let target = players[Math.floor(Math.random() * players.length)].username;
@@ -342,7 +343,110 @@ function spawnFood() {
 function drawPlayer(p) {
   p.r += (p.targetR - p.r) * 0.15;
 
+  // Track player velocity
+  if (!p.prevX) {
+    p.prevX = p.x;
+    p.prevY = p.y;
+  }
+  p.vx = p.x - p.prevX;
+  p.vy = p.y - p.prevY;
+  p.prevX = p.x;
+  p.prevY = p.y;
+
   const offsets = [-canvas.width, 0, canvas.width];
+  const now = Date.now();
+
+  // Add smoke puff trail if attacker
+  if (!p.trail) p.trail = [];
+  if (eatTargets[p.username]) {
+    p.trail.push({
+      x: p.x + (Math.random() - 0.5) * 10,
+      y: p.y + (Math.random() - 0.5) * 10,
+      time: now,
+      jitter: Math.random() * 4,
+      sizeFactor: 0.5 + Math.random() * 0.5,
+      swirlStartAngle: Math.random() * Math.PI * 2,
+      swirlSpeed: 0.002 + Math.random() * 0.002,
+      velBias: { x: p.vx || 0, y: p.vy || 0 },
+    });
+    if (p.trail.length > 40) p.trail.shift();
+  }
+
+  // Draw trail smoke puffs
+  if (eatTargets[p.username] && p.trail) {
+    for (const puff of p.trail) {
+      const age = now - puff.time;
+      const life = 1000;
+      const alpha = Math.max(0, 1 - age / life);
+      const radius = p.r * puff.sizeFactor * (1 + age / life);
+
+      if (alpha <= 0) {
+        if (!puff.burstDone) {
+          const vb = puff.velBias;
+          for (let i = 0; i < 6; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 0.5 + Math.random() * 1;
+            const dirX = Math.cos(angle) * speed + vb.x * 0.3;
+            const dirY = Math.sin(angle) * speed + vb.y * 0.3;
+
+            particles_other.push({
+              x: puff.x,
+              y: puff.y,
+              dx: dirX,
+              dy: dirY,
+              start: now,
+              life: 700,
+              radius: 2 + Math.random() * 2,
+            });
+          }
+          puff.burstDone = true;
+        }
+        continue;
+      }
+
+      for (const dx_offset of offsets) {
+        for (const dy_offset of [-canvas.height, 0, canvas.height]) {
+          const puffX = puff.x + dx_offset;
+          const puffY = puff.y + dy_offset;
+
+          for (let i = 0; i < 3; i++) {
+            const offsetX = (Math.random() - 0.5) * 5;
+            const offsetY = (Math.random() - 0.5) * 5;
+            const r = radius * (0.7 + Math.random() * 0.3);
+
+            ctx.beginPath();
+            ctx.arc(puffX + offsetX, puffY + offsetY, r, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(180,180,180,${alpha * 0.3})`;
+            ctx.fill();
+          }
+
+          // Swirl line
+          const swirlAngle = puff.swirlStartAngle + age * puff.swirlSpeed;
+          const swirlRadius = radius * 0.6;
+
+          ctx.save();
+          ctx.translate(puffX, puffY);
+          ctx.rotate(swirlAngle);
+
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          for (let t = 0; t < 1; t += 0.05) {
+            const angle = t * Math.PI * 2 * 1.5;
+            const r = swirlRadius * t;
+            const x = Math.cos(angle) * r;
+            const y = Math.sin(angle) * r;
+            ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = `rgba(100, 100, 100, ${alpha * 0.4})`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+  }
+
+  // Draw the player and duplicates
   for (const dx_offset of offsets) {
     for (const dy_offset of [-canvas.height, 0, canvas.height]) {
       const drawX = p.x + dx_offset;
@@ -359,7 +463,7 @@ function drawPlayer(p) {
         const pulsationFactor =
           (Math.sin(Date.now() / (animationSpeed / (2 * Math.PI))) + 1) / 2;
 
-        ctx.strokeStyle = "red";
+        ctx.strokeStyle = "purple";
         currentLineWidth = 3 + pulsationFactor * 3;
         ctx.lineWidth = currentLineWidth;
       } else if (p.isPiece) {
@@ -1164,6 +1268,33 @@ function animate() {
         players.splice(j, 1);
         if (i > j) {
           i--;
+        }
+      }
+    }
+
+    const now = Date.now();
+    for (let i = particles_other.length - 1; i >= 0; i--) {
+      const p = particles_other[i];
+      const age = now - p.start;
+      const alpha = 1 - age / p.life;
+
+      if (alpha <= 0) {
+        particles_other.splice(i, 1);
+        continue;
+      }
+
+      p.x += p.dx / 2;
+      p.y += p.dy / 2;
+
+      for (const dx_offset of [-canvas.width, 0, canvas.width]) {
+        for (const dy_offset of [-canvas.height, 0, canvas.height]) {
+          const px = p.x + dx_offset;
+          const py = p.y + dy_offset;
+
+          ctx.beginPath();
+          ctx.arc(px, py, p.radius, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(200, 200, 200, ${alpha * 0.9})`;
+          ctx.fill();
         }
       }
     }
