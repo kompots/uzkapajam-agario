@@ -57,6 +57,13 @@ client.on("message", (channel, tags, message, self) => {
   if (players.length < 101) {
     play(tags);
   }
+  if (Math.floor(Math.random() * 10) + 1 > 7) {
+    if (players.length > 2) {
+      let target = players[Math.floor(Math.random() * players.length)].username;
+      eatTargets[tags.username] = target;
+      console.log("Triggered attack on : ", target);
+    }
+  }
 });
 
 const tree_img = new Image();
@@ -477,7 +484,7 @@ function animate() {
       const dy = player.y - tree.y;
       const distance = Math.hypot(dx, dy);
 
-      if (distance < player.r - 20 + tree.r && player.r > 50) {
+      if (distance < player.r / 3 + tree.r && player.r > 50) {
         // Collision occurred
         collidedWithTree = true;
 
@@ -544,7 +551,7 @@ function animate() {
   // For now, we remove the specific explodedPlayerPieces loop.
   // Attraction and merging logic will be addressed in subsequent steps based on the new structure.
 
-  const MERGE_TIME = 30000; // 1 minute
+  const MERGE_TIME = 15000; // 1 minute
   const usernamesToProcessForMerging = new Set();
 
   // Iterate over all players to find pieces eligible for merging
@@ -626,510 +633,428 @@ function animate() {
     if (typeof p.lastPosition === "undefined") {
       p.lastPosition = { x: p.x, y: p.y };
     }
-    p.markedForRemoval = p.markedForRemoval || false; // Ensure flag exists
+    // p.markedForRemoval = p.markedForRemoval || false; // This line is removed as part of new merging logic
+    // let isAttractedToPrimary = false; // This flag is removed
 
-    let isAttractedToPrimary = false; // Flag to indicate if piece is moving towards a primary player
+    // The entire block for "NEW MERGE ATTRACTION AND ABSORPTION LOGIC" including
+    // if (p.isPiece && Date.now() - p.spawnTime > MERGE_TIME) { ... }
+    // and the subsequent "if (p.markedForRemoval)" and "else if (isAttractedToPrimary)"
+    // is being REMOVED as per the new requirements.
+    // Player pieces will no longer be actively attracted to their primary from afar.
+    // Absorption will be handled in the player-player collision loop.
 
-    // --- NEW MERGE ATTRACTION AND ABSORPTION LOGIC ---
-    if (p.isPiece && Date.now() - p.spawnTime > MERGE_TIME) {
-      const primaryPlayer = players.find(
-        (op) => op.username === p.originalUsername && !op.isPiece
+    // The "else" that previously wrapped the original AI logic is now the default path.
+    // --- START OF ORIGINAL AI LOGIC (now default execution path) ---
+    if (p.isPiece) {
+      // This is the old piece logic (clustering / food for pieces not merging to primary)
+      const parentExists = players.some(
+        (parent) => parent.username === p.originalUsername && !parent.isPiece
       );
+      let isAttractedToCluster = false;
 
-      if (primaryPlayer && primaryPlayer !== p) {
-        // Ensure piece is not targeting itself (e.g. if it just became primary)
-        const MERGE_ATTRACTION_STRENGTH = 0.12; // Speed of attraction
-        const ABSORPTION_DISTANCE_FACTOR = 1.0; // How close to be absorbed (factor of primary's radius)
-
-        const dxToPrimary = getShortestDelta(
-          p.x,
-          primaryPlayer.x,
-          canvas.width
+      // Only cluster if the original player is gone AND the piece is not yet eligible/attracted to a primary
+      if (!parentExists) {
+        const siblingPieces = players.filter(
+          (s) =>
+            s.isPiece && s.originalUsername === p.originalUsername && s !== p
         );
-        const dyToPrimary = getShortestDelta(
-          p.y,
-          primaryPlayer.y,
-          canvas.height
-        );
-        const distanceToPrimary = Math.hypot(dxToPrimary, dyToPrimary);
 
-        // Absorption check: distance < primaryPlayer.r * factor
-        if (distanceToPrimary < primaryPlayer.r * ABSORPTION_DISTANCE_FACTOR) {
-          // Absorb piece
-          const combinedArea =
-            Math.PI * primaryPlayer.r * primaryPlayer.r + Math.PI * p.r * p.r;
-          primaryPlayer.targetR = Math.sqrt(combinedArea / Math.PI);
+        if (siblingPieces.length > 0) {
+          let centroidX = 0;
+          let centroidY = 0;
+          let totalSiblingEffectiveMass = 0;
 
-          p.markedForRemoval = true; // Mark the piece for removal
-          isAttractedToPrimary = true; // Stop other movements for this piece this frame
-        } else if (distanceToPrimary > 0) {
-          // Attract piece if not absorbing
-          const normDx = dxToPrimary / distanceToPrimary;
-          const normDy = dyToPrimary / distanceToPrimary;
-          // Apply force directly, can be adjusted by player's speed/mass properties if needed
-          p.dx += normDx * MERGE_ATTRACTION_STRENGTH;
-          p.dy += normDy * MERGE_ATTRACTION_STRENGTH;
-          isAttractedToPrimary = true;
+          for (const sibling of siblingPieces) {
+            const mass = sibling.r * sibling.r; // Use area as mass proxy
+            centroidX += sibling.x * mass;
+            centroidY += sibling.y * mass;
+            totalSiblingEffectiveMass += mass;
+          }
+
+          if (totalSiblingEffectiveMass > 0) {
+            centroidX /= totalSiblingEffectiveMass;
+            centroidY /= totalSiblingEffectiveMass;
+
+            const dxToCentroid = getShortestDelta(p.x, centroidX, canvas.width);
+            const dyToCentroid = getShortestDelta(
+              p.y,
+              centroidY,
+              canvas.height
+            );
+            const distanceToCentroid = Math.hypot(dxToCentroid, dyToCentroid);
+
+            const CLUSTER_ATTRACTION_STRENGTH = 0.08;
+            const MIN_DISTANCE_TO_APPLY_FORCE = p.r * 1.05;
+
+            if (distanceToCentroid > MIN_DISTANCE_TO_APPLY_FORCE) {
+              const normDx = dxToCentroid / distanceToCentroid;
+              const normDy = dyToCentroid / distanceToCentroid;
+              const effectiveStrength =
+                CLUSTER_ATTRACTION_STRENGTH *
+                Math.min(distanceToCentroid / 1000.0, 1.0);
+
+              p.dx += normDx * effectiveStrength;
+              p.dy += normDy * effectiveStrength;
+              isAttractedToCluster = true;
+            }
+          }
         }
+      }
+
+      // Food seeking for pieces (if not merging to primary and potentially clustering)
+      const PIECE_FOOD_SEEK_RADIUS = p.r * 1;
+      const PIECE_FOOD_ATTRACTION_STRENGTH = 0.01;
+      let closestFood = null;
+      let minDistToFood = PIECE_FOOD_SEEK_RADIUS;
+
+      for (const f of food) {
+        const distToFood = Math.hypot(p.x - f.x, p.y - f.y);
+        if (distToFood < minDistToFood && distToFood > p.r * 0.5) {
+          minDistToFood = distToFood;
+          closestFood = f;
+        }
+      }
+
+      if (closestFood) {
+        const dxToFood = closestFood.x - p.x;
+        const dyToFood = closestFood.y - p.y;
+        const normDxToFood = dxToFood / minDistToFood;
+        const normDyToFood = dyToFood / minDistToFood;
+        const actualFoodAttractionStrength = isAttractedToCluster
+          ? PIECE_FOOD_ATTRACTION_STRENGTH * 0.5
+          : PIECE_FOOD_ATTRACTION_STRENGTH;
+        p.dx += normDxToFood * actualFoodAttractionStrength;
+        p.dy += normDyToFood * actualFoodAttractionStrength;
       }
     }
 
-    if (p.markedForRemoval) {
-      // If marked for removal, skip all other logic for this player.
-      // Actual removal will happen after the main players loop.
-      // Continue to next player in the loop essentially.
-    } else if (isAttractedToPrimary) {
-      // If attracted to primary, apply basic physics and continue.
-      // No other AI (fleeing, food seeking, etc.) should apply.
-      const speed = 1 * (30 / p.r); // Use existing speed calculation
-      p.dx = Math.max(-speed, Math.min(speed, p.dx));
-      p.dy = Math.max(-speed, Math.min(speed, p.dy));
-      p.x += p.dx;
-      p.y += p.dy;
-      p.x = (p.x + canvas.width) % canvas.width;
-      p.y = (p.y + canvas.height) % canvas.height;
-      // Also update lastPosition and stagnationCounter if those are still relevant
-      if (
-        Math.hypot(p.x - p.lastPosition.x, p.y - p.lastPosition.y) < 0.1 &&
-        Math.hypot(p.dx, p.dy) < 0.1
-      ) {
-        p.stagnationCounter++;
-      } else {
-        p.stagnationCounter = 0;
-      }
-      p.lastPosition = { x: p.x, y: p.y };
-    } else {
-      // --- START OF ORIGINAL AI LOGIC (conditionally executed) ---
-      // This 'else' block now contains all the previous AI decision making
-      // (piece clustering, food seeking for pieces, general AI for all)
+    // Player state variables for movement decisions each tick
+    let fleeing = false;
+    let target = null; // Target object {dx, dy, dist} if player p is pursuing something
+    let avoidingSpikes = false; // True if spike avoidance maneuver is active for player p
+    const forcedTargetUsername = eatTargets[p.username]; // Username of the forced target, if any
+    let isPursuingForcedTarget = false; // True if player p is acting on a forced target this tick
 
-      if (p.isPiece) {
-        // This is the old piece logic (clustering / food for pieces not merging to primary)
-        const parentExists = players.some(
-          (parent) => parent.username === p.originalUsername && !parent.isPiece
-        );
-        let isAttractedToCluster = false;
+    // 1. Handle Forced Targets (Highest Priority)
+    if (forcedTargetUsername) {
+      const victim = players.find((x) => x.username === forcedTargetUsername);
+      if (victim && victim !== p) {
+        const targetDx = getShortestDelta(p.x, victim.x, canvas.width);
+        const targetDy = getShortestDelta(p.y, victim.y, canvas.height);
+        const dist = Math.hypot(targetDx, targetDy);
 
-        // Only cluster if the original player is gone AND the piece is not yet eligible/attracted to a primary
-        if (!parentExists) {
-          const siblingPieces = players.filter(
-            (s) =>
-              s.isPiece && s.originalUsername === p.originalUsername && s !== p
-          );
-
-          if (siblingPieces.length > 0) {
-            let centroidX = 0;
-            let centroidY = 0;
-            let totalSiblingEffectiveMass = 0;
-
-            for (const sibling of siblingPieces) {
-              const mass = sibling.r * sibling.r; // Use area as mass proxy
-              centroidX += sibling.x * mass;
-              centroidY += sibling.y * mass;
-              totalSiblingEffectiveMass += mass;
-            }
-
-            if (totalSiblingEffectiveMass > 0) {
-              centroidX /= totalSiblingEffectiveMass;
-              centroidY /= totalSiblingEffectiveMass;
-
-              const dxToCentroid = getShortestDelta(
-                p.x,
-                centroidX,
-                canvas.width
-              );
-              const dyToCentroid = getShortestDelta(
-                p.y,
-                centroidY,
-                canvas.height
-              );
-              const distanceToCentroid = Math.hypot(dxToCentroid, dyToCentroid);
-
-              const CLUSTER_ATTRACTION_STRENGTH = 0.08;
-              const MIN_DISTANCE_TO_APPLY_FORCE = p.r * 1.05;
-
-              if (distanceToCentroid > MIN_DISTANCE_TO_APPLY_FORCE) {
-                const normDx = dxToCentroid / distanceToCentroid;
-                const normDy = dyToCentroid / distanceToCentroid;
-                const effectiveStrength =
-                  CLUSTER_ATTRACTION_STRENGTH *
-                  Math.min(distanceToCentroid / 1000.0, 1.0);
-
-                p.dx += normDx * effectiveStrength;
-                p.dy += normDy * effectiveStrength;
-                isAttractedToCluster = true;
-              }
-            }
-          }
-        }
-
-        // Food seeking for pieces (if not merging to primary and potentially clustering)
-        const PIECE_FOOD_SEEK_RADIUS = p.r * 1;
-        const PIECE_FOOD_ATTRACTION_STRENGTH = 0.01;
-        let closestFood = null;
-        let minDistToFood = PIECE_FOOD_SEEK_RADIUS;
-
-        for (const f of food) {
-          const distToFood = Math.hypot(p.x - f.x, p.y - f.y);
-          if (distToFood < minDistToFood && distToFood > p.r * 0.5) {
-            minDistToFood = distToFood;
-            closestFood = f;
-          }
-        }
-
-        if (closestFood) {
-          const dxToFood = closestFood.x - p.x;
-          const dyToFood = closestFood.y - p.y;
-          const normDxToFood = dxToFood / minDistToFood;
-          const normDyToFood = dyToFood / minDistToFood;
-          const actualFoodAttractionStrength = isAttractedToCluster
-            ? PIECE_FOOD_ATTRACTION_STRENGTH * 0.5
-            : PIECE_FOOD_ATTRACTION_STRENGTH;
-          p.dx += normDxToFood * actualFoodAttractionStrength;
-          p.dy += normDyToFood * actualFoodAttractionStrength;
-        }
-      }
-
-      // Player state variables for movement decisions each tick
-      let fleeing = false;
-      let target = null; // Target object {dx, dy, dist} if player p is pursuing something
-      let avoidingSpikes = false; // True if spike avoidance maneuver is active for player p
-      const forcedTargetUsername = eatTargets[p.username]; // Username of the forced target, if any
-      let isPursuingForcedTarget = false; // True if player p is acting on a forced target this tick
-
-      // 1. Handle Forced Targets (Highest Priority)
-      if (forcedTargetUsername) {
-        const victim = players.find((x) => x.username === forcedTargetUsername);
-        if (victim && victim !== p) {
-          const targetDx = getShortestDelta(p.x, victim.x, canvas.width);
-          const targetDy = getShortestDelta(p.y, victim.y, canvas.height);
-          const dist = Math.hypot(targetDx, targetDy);
-
-          if (dist > 0) {
-            target = { dx: targetDx, dy: targetDy, dist: dist };
-            isPursuingForcedTarget = true;
-            fleeing = false; // Forced target overrides fleeing
-          } else {
-            delete eatTargets[p.username]; // Target is too close or invalid, clear command
-          }
+        if (dist > 0) {
+          target = { dx: targetDx, dy: targetDy, dist: dist };
+          isPursuingForcedTarget = true;
+          fleeing = false; // Forced target overrides fleeing
         } else {
-          delete eatTargets[p.username]; // Victim not found, clear command
+          delete eatTargets[p.username]; // Target is too close or invalid, clear command
+        }
+      } else {
+        delete eatTargets[p.username]; // Victim not found, clear command
+      }
+    }
+
+    // 2. If not pursuing a forced target, consider AI behaviors (Spike Avoidance, General AI)
+    if (!isPursuingForcedTarget) {
+      // 2a. Spike Tree Avoidance (scaled for non-piece players)
+      if (!p.isPiece && Math.random() < 0.75) {
+        // Removed p.r < 50 condition
+        let totalRepulsionDx = 0;
+        let totalRepulsionDy = 0;
+        let spikeNearby = false;
+
+        for (const tree of spikedTrees) {
+          const distToTree = Math.hypot(p.x - tree.x, p.y - tree.y);
+          // Scaled dangerRadius: awareness decreases for larger players
+          const dangerRadius = tree.r + p.r + Math.max(50 - p.r / 2, 10.0);
+
+          if (distToTree < dangerRadius && distToTree > 0) {
+            const repulsionDx = p.x - tree.x;
+            const repulsionDy = p.y - tree.y;
+            const normRepulsionDxFromTree = repulsionDx / distToTree;
+            const normRepulsionDyFromTree = repulsionDy / distToTree;
+            const weight = (dangerRadius - distToTree) / dangerRadius;
+            totalRepulsionDx += normRepulsionDxFromTree * weight;
+            totalRepulsionDy += normRepulsionDyFromTree * weight;
+            spikeNearby = true;
+          }
+        }
+
+        if (spikeNearby) {
+          const magnitude = Math.hypot(totalRepulsionDx, totalRepulsionDy);
+          if (magnitude > 0) {
+            const finalRepulsionDx = totalRepulsionDx / magnitude;
+            const finalRepulsionDy = totalRepulsionDy / magnitude;
+            // Scaled avoidanceStrength: larger players are less affected
+            const avoidanceStrength = Math.max(0.15 - p.r / 1000, 0.02);
+
+            p.dx += finalRepulsionDx * avoidanceStrength;
+            p.dy += finalRepulsionDy * avoidanceStrength;
+
+            avoidingSpikes = true;
+            target = null;
+          }
         }
       }
 
-      // 2. If not pursuing a forced target, consider AI behaviors (Spike Avoidance, General AI)
-      if (!isPursuingForcedTarget) {
-        // 2a. Spike Tree Avoidance (scaled for non-piece players)
-        if (!p.isPiece && Math.random() < 0.75) {
-          // Removed p.r < 50 condition
-          let totalRepulsionDx = 0;
-          let totalRepulsionDy = 0;
-          let spikeNearby = false;
+      // 2b. General AI (Fleeing, Attacking other players, Food Seeking)
+      if (!avoidingSpikes) {
+        let potentialAttackTarget = null;
+        let localTargetDist = Infinity;
+        let soughtCluster = false;
 
-          for (const tree of spikedTrees) {
-            const distToTree = Math.hypot(p.x - tree.x, p.y - tree.y);
-            // Scaled dangerRadius: awareness decreases for larger players
-            const dangerRadius = tree.r + p.r + Math.max(50 - p.r / 2, 10.0);
+        if (!fleeing) {
+          for (const other of players) {
+            if (p === other) continue;
+            if (
+              p.isPiece &&
+              other.username === p.originalUsername &&
+              !other.isPiece
+            )
+              continue;
+            if (
+              !p.isPiece &&
+              other.isPiece &&
+              other.originalUsername === p.username
+            )
+              continue;
 
-            if (distToTree < dangerRadius && distToTree > 0) {
-              const repulsionDx = p.x - tree.x;
-              const repulsionDy = p.y - tree.y;
-              const normRepulsionDxFromTree = repulsionDx / distToTree;
-              const normRepulsionDyFromTree = repulsionDy / distToTree;
-              const weight = (dangerRadius - distToTree) / dangerRadius;
-              totalRepulsionDx += normRepulsionDxFromTree * weight;
-              totalRepulsionDy += normRepulsionDyFromTree * weight;
-              spikeNearby = true;
-            }
-          }
+            const vec_p_to_other_x = getShortestDelta(
+              p.x,
+              other.x,
+              canvas.width
+            );
+            const vec_p_to_other_y = getShortestDelta(
+              p.y,
+              other.y,
+              canvas.height
+            );
+            const dist_p_to_other = Math.hypot(
+              vec_p_to_other_x,
+              vec_p_to_other_y
+            );
 
-          if (spikeNearby) {
-            const magnitude = Math.hypot(totalRepulsionDx, totalRepulsionDy);
-            if (magnitude > 0) {
-              const finalRepulsionDx = totalRepulsionDx / magnitude;
-              const finalRepulsionDy = totalRepulsionDy / magnitude;
-              // Scaled avoidanceStrength: larger players are less affected
-              const avoidanceStrength = Math.max(0.15 - p.r / 1000, 0.02);
+            if (dist_p_to_other === 0) continue;
 
-              p.dx += finalRepulsionDx * avoidanceStrength;
-              p.dy += finalRepulsionDy * avoidanceStrength;
-
-              avoidingSpikes = true;
+            if (other.r > p.r * 1.1 && dist_p_to_other < other.r * 2) {
+              p.dx -= (vec_p_to_other_x / dist_p_to_other) * 0.15;
+              p.dy -= (vec_p_to_other_y / dist_p_to_other) * 0.15;
+              fleeing = true;
               target = null;
+              potentialAttackTarget = null;
+              break;
+            } else if (
+              !fleeing &&
+              p.r > other.r * 1.1 &&
+              dist_p_to_other < 500 &&
+              dist_p_to_other < localTargetDist
+            ) {
+              potentialAttackTarget = {
+                dx: vec_p_to_other_x,
+                dy: vec_p_to_other_y,
+                dist: dist_p_to_other,
+              };
+              localTargetDist = dist_p_to_other;
             }
           }
         }
 
-        // 2b. General AI (Fleeing, Attacking other players, Food Seeking)
-        if (!avoidingSpikes) {
-          let potentialAttackTarget = null;
-          let localTargetDist = Infinity;
-          let soughtCluster = false;
+        if (!fleeing && !p.isPiece) {
+          const MIN_CLUSTER_SIZE = 2;
+          const CLUSTER_RADIUS_CHECK = p.r * 5.5;
+          const MAX_DIST_TO_CLUSTER_CENTER = p.r * 5;
+          const SMALL_PLAYER_MAX_RADIUS = p.r * 0.6;
+          let bestClusterCentroid = null;
+          let maxClusterScore = 0;
 
-          if (!fleeing) {
-            for (const other of players) {
-              if (p === other) continue;
+          for (const potentialCenterPlayer of players) {
+            if (
+              potentialCenterPlayer === p ||
+              potentialCenterPlayer.r >= SMALL_PLAYER_MAX_RADIUS ||
+              potentialCenterPlayer.isPiece
+            )
+              continue;
+            if (
+              Math.hypot(
+                p.x - potentialCenterPlayer.x,
+                p.y - potentialCenterPlayer.y
+              ) >
+              MAX_DIST_TO_CLUSTER_CENTER + CLUSTER_RADIUS_CHECK
+            )
+              continue;
+
+            let currentClusterMembers = [];
+            let sumX = 0,
+              sumY = 0,
+              totalMassEquivalent = 0;
+            for (const memberPlayer of players) {
               if (
-                p.isPiece &&
-                other.username === p.originalUsername &&
-                !other.isPiece
+                memberPlayer === p ||
+                memberPlayer.r >= SMALL_PLAYER_MAX_RADIUS ||
+                memberPlayer.isPiece
               )
                 continue;
-              if (
-                !p.isPiece &&
-                other.isPiece &&
-                other.originalUsername === p.username
-              )
-                continue;
-
-              const vec_p_to_other_x = getShortestDelta(
-                p.x,
-                other.x,
-                canvas.width
-              );
-              const vec_p_to_other_y = getShortestDelta(
-                p.y,
-                other.y,
-                canvas.height
-              );
-              const dist_p_to_other = Math.hypot(
-                vec_p_to_other_x,
-                vec_p_to_other_y
-              );
-
-              if (dist_p_to_other === 0) continue;
-
-              if (other.r > p.r * 1.1 && dist_p_to_other < other.r * 2) {
-                p.dx -= (vec_p_to_other_x / dist_p_to_other) * 0.15;
-                p.dy -= (vec_p_to_other_y / dist_p_to_other) * 0.15;
-                fleeing = true;
-                target = null;
-                potentialAttackTarget = null;
-                break;
-              } else if (
-                !fleeing &&
-                p.r > other.r * 1.1 &&
-                dist_p_to_other < 500 &&
-                dist_p_to_other < localTargetDist
-              ) {
-                potentialAttackTarget = {
-                  dx: vec_p_to_other_x,
-                  dy: vec_p_to_other_y,
-                  dist: dist_p_to_other,
-                };
-                localTargetDist = dist_p_to_other;
-              }
-            }
-          }
-
-          if (!fleeing && !p.isPiece) {
-            const MIN_CLUSTER_SIZE = 2;
-            const CLUSTER_RADIUS_CHECK = p.r * 5.5;
-            const MAX_DIST_TO_CLUSTER_CENTER = p.r * 5;
-            const SMALL_PLAYER_MAX_RADIUS = p.r * 0.6;
-            let bestClusterCentroid = null;
-            let maxClusterScore = 0;
-
-            for (const potentialCenterPlayer of players) {
-              if (
-                potentialCenterPlayer === p ||
-                potentialCenterPlayer.r >= SMALL_PLAYER_MAX_RADIUS ||
-                potentialCenterPlayer.isPiece
-              )
-                continue;
+              if (memberPlayer.originalUsername === p.username) continue;
               if (
                 Math.hypot(
-                  p.x - potentialCenterPlayer.x,
-                  p.y - potentialCenterPlayer.y
-                ) >
-                MAX_DIST_TO_CLUSTER_CENTER + CLUSTER_RADIUS_CHECK
-              )
-                continue;
-
-              let currentClusterMembers = [];
-              let sumX = 0,
-                sumY = 0,
-                totalMassEquivalent = 0;
-              for (const memberPlayer of players) {
-                if (
-                  memberPlayer === p ||
-                  memberPlayer.r >= SMALL_PLAYER_MAX_RADIUS ||
-                  memberPlayer.isPiece
-                )
-                  continue;
-                if (memberPlayer.originalUsername === p.username) continue;
-                if (
-                  Math.hypot(
-                    potentialCenterPlayer.x - memberPlayer.x,
-                    potentialCenterPlayer.y - memberPlayer.y
-                  ) < CLUSTER_RADIUS_CHECK
-                ) {
-                  currentClusterMembers.push(memberPlayer);
-                  sumX += memberPlayer.x * memberPlayer.r;
-                  sumY += memberPlayer.y * memberPlayer.r;
-                  totalMassEquivalent += memberPlayer.r;
-                }
-              }
-
-              if (
-                currentClusterMembers.length >= MIN_CLUSTER_SIZE &&
-                totalMassEquivalent > 0
+                  potentialCenterPlayer.x - memberPlayer.x,
+                  potentialCenterPlayer.y - memberPlayer.y
+                ) < CLUSTER_RADIUS_CHECK
               ) {
-                const centroidX = sumX / totalMassEquivalent;
-                const centroidY = sumY / totalMassEquivalent;
-                const dCx = getShortestDelta(p.x, centroidX, canvas.width);
-                const dCy = getShortestDelta(p.y, centroidY, canvas.height);
-                const distToCentroid = Math.hypot(dCx, dCy);
-                if (
-                  distToCentroid < MAX_DIST_TO_CLUSTER_CENTER &&
-                  distToCentroid > 1
-                ) {
-                  const score =
-                    (currentClusterMembers.length * totalMassEquivalent) /
-                    (distToCentroid * distToCentroid + 1);
-                  if (score > maxClusterScore) {
-                    maxClusterScore = score;
-                    bestClusterCentroid = {
-                      dx_to_p: dCx,
-                      dy_to_p: dCy,
-                      dist: distToCentroid,
-                    };
-                  }
+                currentClusterMembers.push(memberPlayer);
+                sumX += memberPlayer.x * memberPlayer.r;
+                sumY += memberPlayer.y * memberPlayer.r;
+                totalMassEquivalent += memberPlayer.r;
+              }
+            }
+
+            if (
+              currentClusterMembers.length >= MIN_CLUSTER_SIZE &&
+              totalMassEquivalent > 0
+            ) {
+              const centroidX = sumX / totalMassEquivalent;
+              const centroidY = sumY / totalMassEquivalent;
+              const dCx = getShortestDelta(p.x, centroidX, canvas.width);
+              const dCy = getShortestDelta(p.y, centroidY, canvas.height);
+              const distToCentroid = Math.hypot(dCx, dCy);
+              if (
+                distToCentroid < MAX_DIST_TO_CLUSTER_CENTER &&
+                distToCentroid > 1
+              ) {
+                const score =
+                  (currentClusterMembers.length * totalMassEquivalent) /
+                  (distToCentroid * distToCentroid + 1);
+                if (score > maxClusterScore) {
+                  maxClusterScore = score;
+                  bestClusterCentroid = {
+                    dx_to_p: dCx,
+                    dy_to_p: dCy,
+                    dist: distToCentroid,
+                  };
                 }
               }
             }
-            if (bestClusterCentroid) {
-              target = {
-                dx: bestClusterCentroid.dx_to_p,
-                dy: bestClusterCentroid.dy_to_p,
-                dist: bestClusterCentroid.dist,
-              };
-              soughtCluster = true;
-              potentialAttackTarget = null;
+          }
+          if (bestClusterCentroid) {
+            target = {
+              dx: bestClusterCentroid.dx_to_p,
+              dy: bestClusterCentroid.dy_to_p,
+              dist: bestClusterCentroid.dist,
+            };
+            soughtCluster = true;
+            potentialAttackTarget = null;
+          }
+        }
+
+        if (!fleeing && !soughtCluster && potentialAttackTarget) {
+          target = potentialAttackTarget;
+        }
+
+        if (!fleeing && !target) {
+          let bestFoodCluster = null;
+          let bestFoodScore = 0;
+          for (const f of food) {
+            const foodClusterDensityCheck = food.filter((o) => {
+              const dfx = getShortestDelta(f.x, o.x, canvas.width);
+              const dfy = getShortestDelta(f.y, o.y, canvas.height);
+              return Math.hypot(dfx, dfy) < 80;
+            });
+            const foodDx = getShortestDelta(p.x, f.x, canvas.width);
+            const foodDy = getShortestDelta(p.y, f.y, canvas.height);
+            const distToFood = Math.hypot(foodDx, foodDy);
+            if (distToFood < 30 || distToFood === 0) continue;
+            const score = foodClusterDensityCheck.length / distToFood;
+            if (score > bestFoodScore) {
+              bestFoodScore = score;
+              bestFoodCluster = foodClusterDensityCheck;
             }
           }
-
-          if (!fleeing && !soughtCluster && potentialAttackTarget) {
-            target = potentialAttackTarget;
-          }
-
-          if (!fleeing && !target) {
-            let bestFoodCluster = null;
-            let bestFoodScore = 0;
-            for (const f of food) {
-              const foodClusterDensityCheck = food.filter((o) => {
-                const dfx = getShortestDelta(f.x, o.x, canvas.width);
-                const dfy = getShortestDelta(f.y, o.y, canvas.height);
-                return Math.hypot(dfx, dfy) < 80;
-              });
-              const foodDx = getShortestDelta(p.x, f.x, canvas.width);
-              const foodDy = getShortestDelta(p.y, f.y, canvas.height);
-              const distToFood = Math.hypot(foodDx, foodDy);
-              if (distToFood < 30 || distToFood === 0) continue;
-              const score = foodClusterDensityCheck.length / distToFood;
-              if (score > bestFoodScore) {
-                bestFoodScore = score;
-                bestFoodCluster = foodClusterDensityCheck;
-              }
-            }
-            if (bestFoodCluster && bestFoodCluster.length > 0) {
-              const avgX =
-                bestFoodCluster.reduce((sum, f) => sum + f.x, 0) /
-                bestFoodCluster.length;
-              const avgY =
-                bestFoodCluster.reduce((sum, f) => sum + f.y, 0) /
-                bestFoodCluster.length;
-              const targetDx = getShortestDelta(p.x, avgX, canvas.width);
-              const targetDy = getShortestDelta(p.y, avgY, canvas.height);
-              const distToFoodCluster = Math.hypot(targetDx, targetDy);
-              if (distToFoodCluster > 1) {
-                target = {
-                  dx: targetDx,
-                  dy: targetDy,
-                  dist: distToFoodCluster,
-                };
-              }
+          if (bestFoodCluster && bestFoodCluster.length > 0) {
+            const avgX =
+              bestFoodCluster.reduce((sum, f) => sum + f.x, 0) /
+              bestFoodCluster.length;
+            const avgY =
+              bestFoodCluster.reduce((sum, f) => sum + f.y, 0) /
+              bestFoodCluster.length;
+            const targetDx = getShortestDelta(p.x, avgX, canvas.width);
+            const targetDy = getShortestDelta(p.y, avgY, canvas.height);
+            const distToFoodCluster = Math.hypot(targetDx, targetDy);
+            if (distToFoodCluster > 1) {
+              target = { dx: targetDx, dy: targetDy, dist: distToFoodCluster };
             }
           }
         }
       }
+    }
 
-      // 3. Movement Application
-      if (target && !fleeing && target.dist > 1) {
-        const normX = target.dx / target.dist;
-        const normY = target.dy / target.dist;
+    // 3. Movement Application
+    if (target && !fleeing && target.dist > 1) {
+      const normX = target.dx / target.dist;
+      const normY = target.dy / target.dist;
 
-        if (isPursuingForcedTarget) {
-          const forcedAccel = 1;
-          p.dx += normX * forcedAccel;
-          p.dy += normY * forcedAccel;
-          p.dx *= 0.95;
-          p.dy *= 0.95;
-        } else {
-          if (target.dist < 60) {
-            const correction = 1;
-            const align = 0.7;
-            p.dx = p.dx * align + normX * correction;
-            p.dy = p.dy * align + normY * correction;
-          }
-          const standardAccel = 0.015;
-          p.dx += normX * standardAccel;
-          p.dy += normY * standardAccel;
-        }
-      }
-
-      const speed = 1 * (30 / p.r);
-      p.dx = Math.max(-speed, Math.min(speed, p.dx));
-      p.dy = Math.max(-speed, Math.min(speed, p.dy));
-
-      p.x += p.dx;
-      p.y += p.dy;
-
-      p.x = (p.x + canvas.width) % canvas.width;
-      p.y = (p.y + canvas.height) % canvas.height;
-
-      // Stuck player detection and nudge (this was inside the 'else' block, so it's fine)
-      if (
-        Math.hypot(p.x - p.lastPosition.x, p.y - p.lastPosition.y) < 0.1 &&
-        Math.hypot(p.dx, p.dy) < 0.1
-      ) {
-        p.stagnationCounter++;
+      if (isPursuingForcedTarget) {
+        const forcedAccel = 1;
+        p.dx += normX * forcedAccel;
+        p.dy += normY * forcedAccel;
+        p.dx *= 0.95;
+        p.dy *= 0.95;
       } else {
+        if (target.dist < 60) {
+          const correction = 1;
+          const align = 0.7;
+          p.dx = p.dx * align + normX * correction;
+          p.dy = p.dy * align + normY * correction;
+        }
+        const standardAccel = 0.015;
+        p.dx += normX * standardAccel;
+        p.dy += normY * standardAccel;
+      }
+    }
+
+    const speed = 1 * (30 / p.r);
+    p.dx = Math.max(-speed, Math.min(speed, p.dx));
+    p.dy = Math.max(-speed, Math.min(speed, p.dy));
+
+    p.x += p.dx;
+    p.y += p.dy;
+
+    p.x = (p.x + canvas.width) % canvas.width;
+    p.y = (p.y + canvas.height) % canvas.height;
+
+    // Stuck player detection and nudge (this was inside the 'else' block, so it's fine)
+    if (
+      Math.hypot(p.x - p.lastPosition.x, p.y - p.lastPosition.y) < 0.1 &&
+      Math.hypot(p.dx, p.dy) < 0.1
+    ) {
+      p.stagnationCounter++;
+    } else {
+      p.stagnationCounter = 0;
+    }
+    p.lastPosition = { x: p.x, y: p.y };
+
+    if (p.stagnationCounter > 20) {
+      const hasValidCloseTarget = target && target.dist < p.r;
+      if (!hasValidCloseTarget && !fleeing && !p.isPiece) {
+        const nudgeStrength = 0.05;
+        p.dx += (Math.random() - 0.5) * nudgeStrength;
+        p.dy += (Math.random() - 0.5) * nudgeStrength;
+        p.stagnationCounter = 0;
+      } else if (p.isPiece && p.stagnationCounter > 60) {
+        // For pieces not merging to primary and potentially stuck in a cluster
+        const nudgeStrength = 0.02;
+        p.dx += (Math.random() - 0.5) * nudgeStrength;
+        p.dy += (Math.random() - 0.5) * nudgeStrength;
         p.stagnationCounter = 0;
       }
-      p.lastPosition = { x: p.x, y: p.y };
-
-      if (p.stagnationCounter > 20) {
-        const hasValidCloseTarget = target && target.dist < p.r;
-        if (!hasValidCloseTarget && !fleeing && !p.isPiece) {
-          const nudgeStrength = 0.05;
-          p.dx += (Math.random() - 0.5) * nudgeStrength;
-          p.dy += (Math.random() - 0.5) * nudgeStrength;
-          p.stagnationCounter = 0;
-        } else if (p.isPiece && p.stagnationCounter > 60) {
-          // For pieces not merging to primary and potentially stuck in a cluster
-          const nudgeStrength = 0.02;
-          p.dx += (Math.random() - 0.5) * nudgeStrength;
-          p.dy += (Math.random() - 0.5) * nudgeStrength;
-          p.stagnationCounter = 0;
-        }
-      }
-    } // --- END OF ORIGINAL AI LOGIC (conditional execution) ---
-  }
-
-  // Filter out players marked for removal (e.g. absorbed pieces)
-  // This must be done *after* the loop iterating over players concludes.
-  const activePlayers = [];
-  for (const p of players) {
-    if (!p.markedForRemoval) {
-      activePlayers.push(p);
     }
-  }
-  players.length = 0; // Clear the original array
-  players.push(...activePlayers); // Add back only active players
+  } // --- END OF ORIGINAL AI LOGIC ---
+
+  // The player filtering loop based on p.markedForRemoval is REMOVED.
+  // Piece absorption and removal will now occur within the player-player collision loop.
 
   for (const p of players) {
-    // This loop is for food eating, should be fine
+    // This loop is for food eating
     for (let i = food.length - 1; i >= 0; i--) {
       const f = food[i];
       const dx = f.x - p.x;
@@ -1137,7 +1062,6 @@ function animate() {
       if (Math.hypot(dx, dy) < p.r) {
         const growth = (f.r * 2) / p.r; // Changed growth calculation
         p.targetR += growth;
-        console.log("Augonis: ", growth, " masa: ", p.targetR);
         food.splice(i, 1);
       }
     }
@@ -1160,7 +1084,18 @@ function animate() {
       const dx = p2.x - p1.x;
       const dy = p2.y - p1.y;
       const dist = Math.hypot(dx, dy);
-      if (dist < p1.r && p1.r > p2.r * 1.1) {
+
+      // Standard player eating player
+      if (
+        dist < p1.r &&
+        p1.r > p2.r * 1.1 &&
+        !(
+          !p1.isPiece &&
+          p2.isPiece &&
+          p2.originalUsername === p1.username &&
+          Date.now() - p2.spawnTime > MERGE_TIME
+        )
+      ) {
         const area1 = Math.PI * p1.r * p1.r;
         const area2 = Math.PI * p2.r * p2.r;
         const newArea = area1 + area2;
@@ -1183,11 +1118,45 @@ function animate() {
           delete eatTargets[p1.username];
 
         players.splice(j, 1);
-        // If i (p1's index) was greater than j (p2's index), decrement i because an element before it was removed.
         if (i > j) {
           i--;
         }
         break;
+      }
+      // New: Primary player absorbing its own eligible piece on contact
+      else if (
+        !p1.isPiece && // p1 is a primary player (not a piece)
+        p2.isPiece && // p2 is a piece
+        p2.originalUsername === p1.username && // p2 belongs to p1's original user
+        Date.now() - p2.spawnTime > MERGE_TIME && // p2 is past MERGE_TIME
+        dist < p1.r // p2 is within p1's radius (contact-based absorption)
+      ) {
+        const area1 = Math.PI * p1.r * p1.r;
+        const area2 = Math.PI * p2.r * p2.r;
+        const newArea = area1 + area2;
+        p1.targetR = Math.sqrt(newArea / Math.PI);
+
+        // Spawn particles for merge absorption effect
+        for (let k = 0; k < 15; k++) {
+          // Using k for loop variable
+          particles.push({
+            x: p2.x,
+            y: p2.y,
+            dx: (Math.random() - 0.5) * 3,
+            dy: (Math.random() - 0.5) * 3,
+            alpha: 1,
+            size: 4 + Math.random() * 3,
+            color: "lightblue", // Distinct color for merge
+          });
+        }
+
+        // Remove the absorbed piece p2
+        players.splice(j, 1);
+        if (i > j) {
+          i--; // Adjust outer loop index
+        }
+        // Do not break here, p1 might absorb another piece in the same frame.
+        // The inner loop index j will be correct due to reverse iteration.
       }
     }
   }
