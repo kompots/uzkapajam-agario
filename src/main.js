@@ -89,9 +89,28 @@ async function getAppToken() {
   return res.data.access_token;
 }
 
-async function getUserProfilePicture(username) {
+async function getUserData(username, userId) {
   const token = await getAppToken();
-  const res = await axios.get("https://api.twitch.tv/helix/users", {
+
+  // Get channel ID
+  const channelRes = await axios.get("https://api.twitch.tv/helix/users", {
+    headers: {
+      "Client-ID": clientId,
+      Authorization: `Bearer ${token}`,
+    },
+    params: {
+      login: channel, // 'channel' is a global variable with the channel name
+    },
+  });
+  const channelId = channelRes.data.data[0]?.id;
+
+  if (!channelId) {
+    console.error("Could not fetch channel ID for:", channel);
+    return { profile_image_url: null, followed_at: null };
+  }
+
+  // Get user profile picture (existing logic)
+  const userProfileRes = await axios.get("https://api.twitch.tv/helix/users", {
     headers: {
       "Client-ID": clientId,
       Authorization: `Bearer ${token}`,
@@ -100,8 +119,43 @@ async function getUserProfilePicture(username) {
       login: username,
     },
   });
+  const profile_image_url =
+    userProfileRes.data.data[0]?.profile_image_url || null;
 
-  return res.data.data[0]?.profile_image_url || null;
+  // Get follower status
+  let followed_at = null;
+  if (userId) {
+    // userId is needed for the follows endpoint
+    try {
+      const followsRes = await axios.get(
+        "https://api.twitch.tv/helix/users/follows",
+        {
+          headers: {
+            "Client-ID": clientId,
+            Authorization: `Bearer ${token}`,
+          },
+          params: {
+            to_id: channelId,
+            from_id: userId,
+          },
+        }
+      );
+      if (followsRes.data.data && followsRes.data.data.length > 0) {
+        followed_at = followsRes.data.data[0].followed_at;
+      }
+    } catch (error) {
+      console.error(
+        "Error fetching follower status for user ID:",
+        userId,
+        error
+      );
+      // Potentially handle 404 for non-followers if API behaves that way, or just let it be null
+    }
+  } else {
+    console.warn("User ID not provided to getUserData for username:", username);
+  }
+
+  return { profile_image_url, followed_at };
 }
 
 window.addEventListener("resize", resizeCanvas);
@@ -253,50 +307,74 @@ function drawSpikedTree(tree) {
 }
 
 async function play(data) {
-  getUserProfilePicture(data.username).then((avatar_url) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = avatar_url;
-    const radius = 30;
-    let x,
-      y,
-      safe = false;
-    for (let attempts = 0; attempts < 100 && !safe; attempts++) {
-      x = Math.random() * (canvas.width - 2 * radius) + radius;
-      y = Math.random() * (canvas.height - 2 * radius) + radius;
-      safe = !players.some(
-        (p) => Math.hypot(p.x - x, p.y - y) < p.r + radius + 10
+  getUserData(data.username, data["user-id"]).then(
+    ({ profile_image_url, followed_at }) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = profile_image_url; // Use the fetched profile image url
+
+      let isPrivilegedByBadge =
+        data.badges &&
+        (data.badges.subscriber ||
+          data.badges.vip ||
+          data.badges.moderator ||
+          data.badges.broadcaster ||
+          data.badges.editor);
+
+      let isPrivilegedByFollow = false;
+      if (followed_at) {
+        const followDate = new Date(followed_at);
+        const now = new Date();
+        const diffTime = Math.abs(now - followDate);
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        if (diffDays > 1) {
+          isPrivilegedByFollow = true;
+        }
+      }
+
+      const finalIsPrivileged = !!(isPrivilegedByBadge || isPrivilegedByFollow);
+      const radius = 30;
+      let x,
+        y,
+        safe = false;
+      for (let attempts = 0; attempts < 100 && !safe; attempts++) {
+        x = Math.random() * (canvas.width - 2 * radius) + radius;
+        y = Math.random() * (canvas.height - 2 * radius) + radius;
+        safe = !players.some(
+          (p) => Math.hypot(p.x - x, p.y - y) < p.r + radius + 10
+        );
+      }
+
+      const player = {
+        username: data.username,
+        display_name: data.display_name || data.username,
+        x,
+        y,
+        dx: 0,
+        dy: 0,
+        r: radius,
+        targetR: radius,
+        avatar: img,
+        isPiece: false,
+        originalUsername: data.username,
+        spawnTime: Date.now(),
+        stagnationCounter: 0,
+        lastPosition: { x, y },
+        speedBoostEndTime: 0,
+        currentSpeedMultiplier: 1.0,
+        targetSpeedMultiplier: 1.5,
+        boostActivationTime: 0,
+        isPrivileged: finalIsPrivileged, // Assign the combined status
+      };
+
+      const existing = players.find(
+        (p) => p.username === data.username && !p.isPiece
       );
+      if (!existing) {
+        players.push(player);
+      }
     }
-
-    const player = {
-      username: data.username,
-      display_name: data.display_name || data.username,
-      x,
-      y,
-      dx: 0,
-      dy: 0,
-      r: radius,
-      targetR: radius,
-      avatar: img,
-      isPiece: false,
-      originalUsername: data.username,
-      spawnTime: Date.now(),
-      stagnationCounter: 0,
-      lastPosition: { x, y },
-      speedBoostEndTime: 0,
-      currentSpeedMultiplier: 1.0,
-      targetSpeedMultiplier: 1.5,
-      boostActivationTime: 0,
-    };
-
-    const existing = players.find(
-      (p) => p.username === data.username && !p.isPiece
-    );
-    if (!existing) {
-      players.push(player);
-    }
-  });
+  );
 }
 
 function spawnFood() {
@@ -513,7 +591,15 @@ function drawPlayer(p) {
 
       if (p.avatar && p.avatar.complete && p.avatar.naturalHeight !== 0) {
         try {
+          if (p.isPrivileged === false) {
+            // Explicitly check for false
+            ctx.filter = "blur(4px)";
+          }
           ctx.drawImage(p.avatar, drawX - p.r, drawY - p.r, p.r * 2, p.r * 2);
+          if (p.isPrivileged === false) {
+            // Reset filter if it was applied
+            ctx.filter = "none";
+          }
         } catch (e) {
           ctx.fillStyle = p.isPiece
             ? "rgba(120,120,120,0.5)"
@@ -1268,33 +1354,6 @@ function animate() {
         players.splice(j, 1);
         if (i > j) {
           i--;
-        }
-      }
-    }
-
-    const now = Date.now();
-    for (let i = particles_other.length - 1; i >= 0; i--) {
-      const p = particles_other[i];
-      const age = now - p.start;
-      const alpha = 1 - age / p.life;
-
-      if (alpha <= 0) {
-        particles_other.splice(i, 1);
-        continue;
-      }
-
-      p.x += p.dx / 2;
-      p.y += p.dy / 2;
-
-      for (const dx_offset of [-canvas.width, 0, canvas.width]) {
-        for (const dy_offset of [-canvas.height, 0, canvas.height]) {
-          const px = p.x + dx_offset;
-          const py = p.y + dy_offset;
-
-          ctx.beginPath();
-          ctx.arc(px, py, p.radius, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(200, 200, 200, ${alpha * 0.9})`;
-          ctx.fill();
         }
       }
     }
