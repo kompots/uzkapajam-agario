@@ -36,11 +36,14 @@ const colors = [
   "lime",
   "cyan",
 ];
-const NUM_SPIKED_TREES = 40;
+const NUM_SPIKED_TREES = 20;
 const SPIKED_TREE_RADIUS = 20;
 const SPIKED_TREE_RESPAWN_DELAY = 30000;
 let lastTreeRespawnTime = 0;
 let gameResetting = false;
+
+let debugPlayerListCounter = 0;
+const DEBUG_PLAYER_LIST_DURATION_FRAMES = 300; // Log for ~5 seconds at 60fps
 
 canvas.width = 1;
 canvas.height = 1;
@@ -68,7 +71,6 @@ client.on("message", (channel, tags, message, self) => {
       play(tags);
     }
   }
-
   // play(tags);
   // if (Math.floor(Math.random() * 10) + 1 > 7) {
   //   if (players.length > 2) {
@@ -333,7 +335,7 @@ async function play(data) {
       }
 
       const finalIsPrivileged = !!(isPrivilegedByBadge || isPrivilegedByFollow);
-      const radius = 200;
+      const radius = 100;
       let x,
         y,
         safe = false;
@@ -713,13 +715,69 @@ function animate() {
       if (distance < player.r - 10 + tree.r && player.r > 50) {
         collidedWithTree = true;
 
-        const numPieces = Math.max(2, Math.floor(player.r / 25));
-        const pieceBaseRadius = player.r / numPieces;
+        // Determine number of pieces based on player size
+        const R_min_for_more_pieces = 50; // Min radius to start getting more than 3 pieces
+        const R_max_for_all_pieces = 300; // Radius at which player is likely to get max pieces (or close to it)
+        const playerRadius = player.r; // Parent player's radius
+
+        let sizeFactor = 0;
+        if (playerRadius > R_min_for_more_pieces) {
+          sizeFactor = Math.min(
+            1,
+            (playerRadius - R_min_for_more_pieces) /
+              (R_max_for_all_pieces - R_min_for_more_pieces)
+          );
+        }
+
+        // Base number of pieces: 3 (for smallest/factor=0) up to 10 (for largest/factor=1)
+        // Spread is 10 - 3 = 7
+        let numPieces = 3 + Math.floor(sizeFactor * 7);
+
+        // Add some randomness: +/- 1 piece, but still influenced by size
+        // Example: if sizeFactor maps to 5 pieces, can be 4, 5, or 6.
+        // If it maps to 3, can be 3 or 4. If it maps to 10, can be 9 or 10.
+        const randomness = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
+        numPieces += randomness;
+
+        // Clamp numPieces between 3 and 10
+        numPieces = Math.max(3, Math.min(10, numPieces));
+
+        console.log(
+          `Explosion: Parent ${player.username} (r=${player.r.toFixed(
+            2
+          )}, mass=${Math.round(
+            player.r * player.r
+          )}) is exploding. Storing preExplosionRadius=${player.r.toFixed(2)}.`
+        );
+        debugPlayerListCounter = DEBUG_PLAYER_LIST_DURATION_FRAMES;
+        console.log(
+          `Explosion Trigger: Activated player list logging for ${DEBUG_PLAYER_LIST_DURATION_FRAMES} frames.`
+        );
+        // const pieceRadius = player.r / Math.sqrt(numPieces); // Old calculation Removed
+
+        const pieceRadii = [];
+        if (numPieces > 0) {
+          const weights = [];
+          let sumOfWeights = 0;
+          const MIN_WEIGHT = 0.1; // To prevent extremely small pieces, ensure a minimum proportion
+
+          for (let i = 0; i < numPieces; i++) {
+            const weight = MIN_WEIGHT + Math.random() * 0.9; // Random weight between MIN_WEIGHT and MIN_WEIGHT + 0.9
+            weights.push(weight);
+            sumOfWeights += weight;
+          }
+
+          for (let i = 0; i < numPieces; i++) {
+            const normalizedWeight = weights[i] / sumOfWeights;
+            let childRadius = player.r * Math.sqrt(normalizedWeight);
+            pieceRadii.push(childRadius);
+          }
+        }
 
         for (let k = 0; k < numPieces; k++) {
           const angle =
             (k / numPieces) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-          const pieceRadius = pieceBaseRadius * (0.8 + Math.random() * 0.65);
+          const currentPieceRadius = pieceRadii[k];
 
           players.push({
             username: `${player.username}_piece_${Date.now()}_${k}`,
@@ -728,12 +786,14 @@ function animate() {
             y: player.y + (player.r / 2) * Math.sin(angle),
             dx: Math.cos(angle) * (2 + Math.random() * 2),
             dy: Math.sin(angle) * (2 + Math.random() * 2),
-            r: pieceRadius,
-            targetR: pieceRadius,
+            r: currentPieceRadius,
+            targetR: currentPieceRadius,
             avatar: player.avatar,
             isPiece: true,
             originalUsername: player.username,
             spawnTime: Date.now(),
+            canMergeTime: Date.now() + 15000,
+            parentPreExplosionRadius: player.r,
           });
         }
 
@@ -764,7 +824,11 @@ function animate() {
   const usernamesToProcessForMerging = new Set();
 
   players.forEach((player) => {
-    if (player.isPiece && Date.now() - player.spawnTime > MERGE_TIME) {
+    if (
+      player.isPiece &&
+      !player.canMergeTime &&
+      Date.now() - player.spawnTime > MERGE_TIME
+    ) {
       usernamesToProcessForMerging.add(player.originalUsername);
     }
   });
@@ -820,12 +884,86 @@ function animate() {
     }
 
     if (p.isPiece) {
+      let isUnderFreshSiblingGravitation = false;
+      if (p.isPiece && p.canMergeTime && p.originalUsername) {
+        let siblingSumX = 0; // Use sum for weighted average if pieces have mass, for now simple average
+        let siblingSumY = 0;
+        let activeSiblingsCount = 0;
+        let referencePlayerForWrapping = p; // Use player p as reference for wrapped calculations
+
+        for (const s of players) {
+          if (
+            s !== p &&
+            s.isPiece &&
+            s.originalUsername === p.originalUsername &&
+            s.canMergeTime
+          ) {
+            // Accumulate sums based on shortest path to reference player (p) to handle wrapping
+            siblingSumX +=
+              referencePlayerForWrapping.x +
+              getShortestDelta(referencePlayerForWrapping.x, s.x, canvas.width);
+            siblingSumY +=
+              referencePlayerForWrapping.y +
+              getShortestDelta(
+                referencePlayerForWrapping.y,
+                s.y,
+                canvas.height
+              );
+            activeSiblingsCount++;
+          }
+        }
+
+        if (activeSiblingsCount > 0) {
+          const targetCentroidX = siblingSumX / activeSiblingsCount;
+          const targetCentroidY = siblingSumY / activeSiblingsCount;
+
+          const vecToCentroidX = getShortestDelta(
+            p.x,
+            targetCentroidX,
+            canvas.width
+          );
+          const vecToCentroidY = getShortestDelta(
+            p.y,
+            targetCentroidY,
+            canvas.height
+          );
+
+          const distToCentroid = Math.hypot(vecToCentroidX, vecToCentroidY);
+
+          // Tunable parameters
+          const MAX_PULL_SPEED = 0.3; // Max speed component added by pull
+          const PULL_ACCELERATION = 0.002; // How quickly it tries to reach pull speed towards centroid
+          // Make this quite small so it's a gentle pull
+
+          if (distToCentroid > p.r / 2) {
+            // Only pull if not already very close/overlapping
+            const normVecX = vecToCentroidX / distToCentroid;
+            const normVecY = vecToCentroidY / distToCentroid;
+
+            // Accelerate towards the centroid, capped by MAX_PULL_SPEED
+            let pullDx = normVecX * PULL_ACCELERATION * distToCentroid;
+            let pullDy = normVecY * PULL_ACCELERATION * distToCentroid;
+
+            // Cap the pull force/speed contribution
+            const currentPullSpeed = Math.hypot(pullDx, pullDy);
+            if (currentPullSpeed > MAX_PULL_SPEED) {
+              pullDx = (pullDx / currentPullSpeed) * MAX_PULL_SPEED;
+              pullDy = (pullDy / currentPullSpeed) * MAX_PULL_SPEED;
+            }
+
+            p.dx += pullDx;
+            p.dy += pullDy;
+            isUnderFreshSiblingGravitation = true; // Set flag here
+          }
+        }
+      }
       const parentExists = players.some(
         (parent) => parent.username === p.originalUsername && !parent.isPiece
       );
       let isAttractedToCluster = false;
 
-      if (!parentExists) {
+      if (!parentExists && !isUnderFreshSiblingGravitation) {
+        // MODIFIED condition
         const siblingPieces = players.filter(
           (s) =>
             s.isPiece && s.originalUsername === p.originalUsername && s !== p
@@ -998,12 +1136,25 @@ function animate() {
             if (dist_p_to_other === 0) continue;
 
             if (other.r > p.r * 1.1 && dist_p_to_other < other.r * 2) {
-              p.dx -= (vec_p_to_other_x / dist_p_to_other) * 0.15;
-              p.dy -= (vec_p_to_other_y / dist_p_to_other) * 0.15;
-              fleeing = true;
-              target = null;
-              potentialAttackTarget = null;
-              break;
+              // Check if p should NOT flee from other (because they are siblings post-delay)
+              const shouldNotFleeSibling =
+                p.isPiece &&
+                other.isPiece &&
+                p.originalUsername === other.originalUsername &&
+                p.canMergeTime; // p is a spike child
+              // Date.now() > p.canMergeTime; // Removed this part
+
+              if (!shouldNotFleeSibling) {
+                // If not a sibling post-delay, or other fleeing conditions met, then flee
+                p.dx -= (vec_p_to_other_x / dist_p_to_other) * 0.15;
+                p.dy -= (vec_p_to_other_y / dist_p_to_other) * 0.15;
+                fleeing = true;
+                target = null;
+                potentialAttackTarget = null;
+                break; // Exit the inner loop for 'other' players as we've decided to flee
+              }
+              // If shouldNotFleeSibling is true, we fall through and p does not flee from this 'other'.
+              // It might still flee from another 'other' in a subsequent iteration.
             } else if (
               !fleeing &&
               p.r > other.r * 1.1 &&
@@ -1251,7 +1402,7 @@ function animate() {
       const f = food[i];
       const dx = f.x - p.x;
       const dy = f.y - p.y;
-      if (Math.hypot(dx, dy) < p.r) {
+      if (Math.hypot(dx, dy) < p.r && !(p.isPiece && p.canMergeTime)) {
         const growth = (f.r * 2) / p.r;
         p.targetR += growth;
         food.splice(i, 1);
@@ -1268,9 +1419,51 @@ function animate() {
       if (
         p1.isPiece &&
         p2.isPiece &&
-        p1.originalUsername === p2.originalUsername
+        p1.originalUsername === p2.originalUsername &&
+        (!p1.canMergeTime || Date.now() <= p1.canMergeTime)
       ) {
         continue;
+      }
+      // If that 'continue' was not hit, then proceed:
+      else if (
+        p1.isPiece &&
+        p2.isPiece &&
+        p1.originalUsername === p2.originalUsername &&
+        p1.canMergeTime &&
+        Date.now() > p1.canMergeTime && // Check p1 has canMergeTime and its > 15s
+        /* p2.canMergeTime && Date.now() > p2.canMergeTime && */ // Implicitly p2 also past its time if p1 is
+        Math.hypot(p2.x - p1.x, p2.y - p1.y) < p1.r
+      ) {
+        // p1 must still be able to reach/touch p2
+
+        // Sibling pieces merging, size difference not strictly required.
+        // p1 absorbs p2.
+        const area1 = Math.PI * p1.r * p1.r;
+        const area2 = Math.PI * p2.r * p2.r;
+        const newArea = area1 + area2;
+        p1.targetR = Math.sqrt(newArea / Math.PI);
+
+        // Standard particle effects for consumption
+        for (let k = 0; k < 20; k++) {
+          // 'k' was used in outer scope for piece creation, ensure no conflict or use different var like 'm'
+          particles.push({
+            x: p2.x,
+            y: p2.y,
+            dx: (Math.random() - 0.5) * 4,
+            dy: (Math.random() - 0.5) * 4,
+            alpha: 1,
+            size: 6 + Math.random() * 4,
+            color: "white", // Or a specific color for sibling merge
+          });
+        }
+
+        // Remove p2 from game
+        players.splice(j, 1);
+        if (i > j) {
+          // Adjust outer loop index if using indexed loops
+          i--;
+        }
+        break; // p1 has eaten, break from inner loop for p2
       }
 
       const dx = p2.x - p1.x;
@@ -1284,7 +1477,9 @@ function animate() {
           !p1.isPiece &&
           p2.isPiece &&
           p2.originalUsername === p1.username &&
-          Date.now() - p2.spawnTime > MERGE_TIME
+          (p2.canMergeTime
+            ? Date.now() > p2.canMergeTime
+            : Date.now() - p2.spawnTime > MERGE_TIME)
         )
       ) {
         const area1 = Math.PI * p1.r * p1.r;
@@ -1328,7 +1523,9 @@ function animate() {
         !p1.isPiece &&
         p2.isPiece &&
         p2.originalUsername === p1.username &&
-        Date.now() - p2.spawnTime > MERGE_TIME &&
+        (p2.canMergeTime
+          ? Date.now() > p2.canMergeTime
+          : Date.now() - p2.spawnTime > MERGE_TIME) &&
         dist < p1.r
       ) {
         const area1 = Math.PI * p1.r * p1.r;
@@ -1356,6 +1553,67 @@ function animate() {
     }
   }
 
+  // Final survivor reformation logic
+  for (let i = players.length - 1; i >= 0; i--) {
+    const p = players[i];
+    if (!p) continue; // Player might have been removed in this frame
+
+    if (
+      p.isPiece &&
+      typeof p.parentPreExplosionRadius !== "undefined" &&
+      p.originalUsername
+    ) {
+      let isLastSurvivor = true;
+      for (const other of players) {
+        if (
+          other !== p &&
+          other.isPiece &&
+          other.originalUsername === p.originalUsername &&
+          typeof other.parentPreExplosionRadius !== "undefined" &&
+          other.parentPreExplosionRadius === p.parentPreExplosionRadius
+        ) {
+          isLastSurvivor = false;
+          break;
+        }
+      }
+
+      if (isLastSurvivor) {
+        console.log(
+          `Reforming: Survivor piece ${p.username} (original: ${
+            p.originalUsername
+          }) found. Current r=${p.r.toFixed(2)}, mass=${Math.round(
+            p.r * p.r
+          )}. Stored parentPreExplosionRadius=${p.parentPreExplosionRadius.toFixed(
+            2
+          )}.`
+        );
+        p.r = p.parentPreExplosionRadius;
+        p.targetR = p.parentPreExplosionRadius;
+        console.log(
+          `Reforming: Survivor piece radius set to r=${p.r.toFixed(
+            2
+          )}, targetR=${p.targetR.toFixed(2)}, mass=${Math.round(p.r * p.r)}.`
+        );
+        p.isPiece = false;
+        const oldPieceUsername = p.username; // For logging. Note: p.username was the piece's unique ID here.
+        p.username = p.originalUsername; // Now p.username is the original Twitch username.
+        console.log(
+          `Reforming: Survivor piece (now main player ${p.username}) properties: isPiece=${p.isPiece}, final username=${p.username}.`
+        );
+
+        delete p.canMergeTime;
+        delete p.parentPreExplosionRadius;
+        // p.originalUsername is now p.username, so no need to delete.
+
+        p.dx = 0;
+        p.dy = 0;
+
+        // Ensure it doesn't get processed by piece-specific logic again this frame if possible,
+        // though being in a subsequent loop helps.
+      }
+    }
+  }
+
   players.sort((a, b) => a.r - b.r);
   for (const p of players) drawPlayer(p);
 
@@ -1368,7 +1626,7 @@ function animate() {
     scoreboardEntries.push({
       display_name: player.display_name,
       username: player.username,
-      score: player.r,
+      score: Math.round(player.r * player.r),
     });
   }
 
@@ -1396,7 +1654,7 @@ function animate() {
           scoreboardEntries.push({
             display_name: displayName || username,
             username: username,
-            score: largestPieceRadius,
+            score: Math.round(largestPieceRadius * largestPieceRadius),
           });
         }
       }
@@ -1414,7 +1672,7 @@ function animate() {
   ctx.fillStyle = "white";
   ctx.font = "18px sans-serif";
   ctx.textAlign = "left";
-  ctx.fillText("🏆 Resnīši:", 30, 45);
+  ctx.fillText("🏆 Resnīši (Mass):", 30, 45);
 
   sortedScoreboardEntries
     .slice(0, entriesToDisplayCount)
@@ -1443,6 +1701,40 @@ function animate() {
     return;
   }
 
+  if (debugPlayerListCounter > 0) {
+    console.log(
+      `--- Player List Snapshot (Frames remaining to log: ${debugPlayerListCounter}) ---`
+    );
+    if (players.length === 0) {
+      console.log("Player list is empty.");
+    } else {
+      players.forEach((p_diag, index) => {
+        let diagInfo = `#${index} - User: "${p_diag.username}", Piece: ${
+          p_diag.isPiece
+        }, R: ${p_diag.r.toFixed(2)}, mass: ${Math.round(p_diag.r * p_diag.r)}`;
+        if (p_diag.isPiece) {
+          diagInfo += `, OrigUser: "${p_diag.originalUsername || "N/A"}"`;
+          if (typeof p_diag.parentPreExplosionRadius !== "undefined") {
+            diagInfo += `, parentR: ${p_diag.parentPreExplosionRadius.toFixed(
+              2
+            )}`;
+          }
+          if (typeof p_diag.canMergeTime !== "undefined") {
+            const mergeTimeDelta = (p_diag.canMergeTime - Date.now()) / 1000;
+            diagInfo += `, mergeIn: ${mergeTimeDelta.toFixed(1)}s`;
+          } else {
+            diagInfo += `, canMergeTime: N/A`;
+          }
+        }
+        console.log(diagInfo);
+      });
+    }
+    console.log(`--- End Snapshot (Total players: ${players.length}) ---`);
+    debugPlayerListCounter--;
+    if (debugPlayerListCounter === 0) {
+      console.log("Player list logging deactivated.");
+    }
+  }
   requestAnimationFrame(animate);
 }
 
