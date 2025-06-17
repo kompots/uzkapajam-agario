@@ -36,8 +36,8 @@ const colors = [
   "lime",
   "cyan",
 ];
-const NUM_SPIKED_TREES = 20;
-const SPIKED_TREE_RADIUS = 20;
+const NUM_SPIKED_TREES = 0;
+const SPIKED_TREE_RADIUS = 15;
 const SPIKED_TREE_RESPAWN_DELAY = 30000;
 let lastTreeRespawnTime = 0;
 let gameResetting = false;
@@ -52,23 +52,87 @@ client.connect();
 
 client.on("message", (channel, tags, message, self) => {
   if (message.includes("!eat")) {
+    const player = players.find((p) => p.username === tags.username);
+    if (player && player.isStopping) {
+      return;
+    } // Do nothing if player is stopping
+
     let parts = message.split(" ");
     eatTargets[tags.username] = parts[1];
     console.log(eatTargets);
-    const player = players.find((p) => p.username === tags.username);
     if (player) {
+      // Player is already confirmed to exist if we reach here and are not stopping.
       player.speedBoostEndTime = Date.now() + 5000;
       player.boostActivationTime = Date.now();
     }
   } else if (message === "!stop") {
-    delete eatTargets[tags.username];
     const player = players.find((p) => p.username === tags.username);
+    if (player) {
+      player.isStopping = true;
+      player.stopStartTime = Date.now();
+      player.originalSpeedComponents = {
+        dx: player.dx,
+        dy: player.dy,
+        currentSpeedMultiplier: player.currentSpeedMultiplier,
+      };
+      player.canMoveAfterStopTime = 0;
+    }
+    delete eatTargets[tags.username];
+    // const player = players.find((p) => p.username === tags.username); // Player is already found
     if (player && player.boostActivationTime > 0) {
       player.speedBoostEndTime = Date.now();
     }
   } else if (message === "!play") {
     if (players.length < 101) {
       play(tags);
+    }
+  } else if (message.toLowerCase() === "!bop") {
+    const player = players.find((p) => p.username === tags.username);
+
+    if (player && player.orbitingSpikeTree) {
+      // Player has an orbiter, let's drop it.
+      // This logic mirrors the timed drop.
+
+      // Create a static tree from the orbiter
+      const droppedTree = {
+        x: player.orbitingSpikeTree.x, // Current world position of the orbiter
+        y: player.orbitingSpikeTree.y,
+        r: player.orbitingSpikeTree.r, // Radius of the orbiter (SPIKED_TREE_RADIUS)
+        dx: (Math.random() - 0.5) / 3, // Standard dx for new environmental trees
+        dy: (Math.random() - 0.5) / 3, // Standard dy for new environmental trees
+        creationTime: Date.now(),
+        maxLifetime: 60000, // 60 seconds in ms
+      };
+      spikedTrees.push(droppedTree);
+
+      // Remove orbiter from player
+      player.orbitingSpikeTree = null;
+      player.hasOrbiterSpawned = false;
+
+      // Set player cooldown for getting a new orbiter
+      player.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown
+    }
+  } else if (message.toLowerCase() === "!zerg") {
+    const player = players.find(
+      (p) => p.username === tags.username && !p.isPiece
+    ); // Ensure it's the main player
+
+    if (player) {
+      // Check if player exists and is a main player
+      if (!player.hasUsedSwarm) {
+        player.hasUsedSwarm = true;
+        spawnZergSwarm(player); // Call the spawning function
+      } else {
+        // Optional: send a message back to user? For now, just log.
+        console.log(
+          `Player ${player.username} tried to use !swarm again, but it's a one-time use command.`
+        );
+      }
+    } else {
+      // Optional: user not found or is a piece.
+      console.log(
+        `Command !swarm ignored for user ${tags.username} (not an active main player).`
+      );
     }
   }
   // play(tags);
@@ -81,11 +145,11 @@ client.on("message", (channel, tags, message, self) => {
   // }
 });
 
-console.log("Spawn kompots");
-play({
-  username: "imkompots",
-  subscriber: true,
-});
+// console.log("Spawn kompots");
+// play({
+//   username: "imkompots",
+//   subscriber: true,
+// });
 
 async function getAppToken() {
   const res = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -335,7 +399,7 @@ async function play(data) {
       }
 
       const finalIsPrivileged = !!(isPrivilegedByBadge || isPrivilegedByFollow);
-      const radius = 100;
+      const radius = 25;
       let x,
         y,
         safe = false;
@@ -359,6 +423,7 @@ async function play(data) {
         avatar: img,
         isPiece: false,
         originalUsername: data.username,
+        master: data.username,
         spawnTime: Date.now(),
         stagnationCounter: 0,
         lastPosition: { x, y },
@@ -367,6 +432,14 @@ async function play(data) {
         targetSpeedMultiplier: 1.5,
         boostActivationTime: 0,
         isPrivileged: finalIsPrivileged, // Assign the combined status
+        isStopping: false,
+        stopStartTime: 0,
+        originalSpeedComponents: { dx: 0, dy: 0, currentSpeedMultiplier: 1.0 },
+        canMoveAfterStopTime: 0,
+        orbitingSpikeTree: null,
+        hasOrbiterSpawned: false,
+        nextOrbiterAvailableTime: 0,
+        hasUsedSwarm: false,
       };
 
       const existing = players.find(
@@ -641,6 +714,122 @@ function drawPlayer(p) {
       ctx.fillText(p.display_name, drawX, drawY);
     }
   }
+
+  // --- BEGIN ADDITION ---
+  if (p.orbitingSpikeTree) {
+    // The orbitingSpikeTree object already has its x, y, and r properties updated.
+    // We might need to ensure it has dx, dy if drawSpikedTree expects them, even if 0.
+    // Let's assume drawSpikedTree can handle it or we provide defaults.
+    const orbiterToDraw = {
+      ...p.orbitingSpikeTree, // Contains x, y, r, angle
+      // dx and dy for a static orbiter (in terms of its own propulsion) would be 0.
+      // The drawSpikedTree function uses SPIKED_TREE_RADIUS internally for some animations,
+      // so p.orbitingSpikeTree.r should be SPIKED_TREE_RADIUS.
+      dx: 0,
+      dy: 0,
+    };
+
+    // Call the existing drawSpikedTree function to render the orbiter.
+    // The drawSpikedTree function handles drawing across canvas wrapped boundaries
+    // as it draws multiple copies if near edges.
+    // So, we just need to pass the primary calculated x,y.
+    drawSpikedTree(orbiterToDraw);
+  }
+  // --- END ADDITION ---
+}
+
+function spawnZergSwarm(masterPlayer) {
+  const SWARM_COUNT = 50;
+  const SWARM_RADIUS = 5;
+  // const SPAWN_CIRCLE_RADIUS = masterPlayer.r + 30; // This line can be removed
+  const zergBaseUsername = `${masterPlayer.username}_Zerg_${Date.now()}`;
+
+  for (let i = 0; i < SWARM_COUNT; i++) {
+    // const angle = (i / SWARM_COUNT) * (Math.PI * 2); // Old logic
+    // const spawnX_old = masterPlayer.x + Math.cos(angle) * SPAWN_CIRCLE_RADIUS; // Old logic
+    // const spawnY_old = masterPlayer.y + Math.sin(angle) * SPAWN_CIRCLE_RADIUS; // Old logic
+
+    let spawnX, spawnY;
+    const edge = Math.floor(Math.random() * 4); // 0: top, 1: right, 2: bottom, 3: left
+    const zergRadiusOffset = SWARM_RADIUS; // Use this for clarity, ensures Zerg is fully on screen
+
+    switch (edge) {
+      case 0: // Top edge
+        spawnX =
+          Math.random() * (canvas.width - zergRadiusOffset * 2) +
+          zergRadiusOffset;
+        spawnY = zergRadiusOffset;
+        break;
+      case 1: // Right edge
+        spawnX = canvas.width - zergRadiusOffset;
+        spawnY =
+          Math.random() * (canvas.height - zergRadiusOffset * 2) +
+          zergRadiusOffset;
+        break;
+      case 2: // Bottom edge
+        spawnX =
+          Math.random() * (canvas.width - zergRadiusOffset * 2) +
+          zergRadiusOffset;
+        spawnY = canvas.height - zergRadiusOffset;
+        break;
+      case 3: // Left edge
+      default:
+        spawnX = zergRadiusOffset;
+        spawnY =
+          Math.random() * (canvas.height - zergRadiusOffset * 2) +
+          zergRadiusOffset;
+        break;
+    }
+
+    const zergUsername = `${zergBaseUsername}_${i}`;
+
+    const newZerg = {
+      username: zergUsername,
+      display_name: "Zerg",
+      master: masterPlayer.username, // Master is the player who used !swarm
+      x: (spawnX + canvas.width) % canvas.width, // Wrap initial position
+      y: (spawnY + canvas.height) % canvas.height,
+      dx: (Math.random() - 0.5) * 0.5, // Small initial random velocity
+      dy: (Math.random() - 0.5) * 0.5,
+      r: SWARM_RADIUS,
+      targetR: SWARM_RADIUS,
+      avatar: tree_img, // Reuse the preloaded tree_img
+      isPiece: false,
+      originalUsername: zergUsername, // For consistency, though not a piece from explosion
+
+      spawnTime: Date.now(), // For general tracking, might be redundant if maxLifetime is primary
+      creationTime: Date.now(), // For lifetime management
+      maxLifetime: 60000, // 60 seconds
+
+      // Standard player properties with defaults for a spawned minion
+      isStopping: false,
+      stopStartTime: 0,
+      originalSpeedComponents: { dx: 0, dy: 0, currentSpeedMultiplier: 1.0 },
+      canMoveAfterStopTime: 0,
+
+      orbitingSpikeTree: null,
+      hasOrbiterSpawned: false, // Zergs don't get orbiters
+      nextOrbiterAvailableTime: Date.now() + 100 * 365 * 24 * 60 * 60 * 1000, // Effectively infinite cooldown
+
+      hasUsedSwarm: true, // Zergs cannot use !swarm
+
+      stagnationCounter: 0,
+      lastPosition: { x: spawnX, y: spawnY },
+      speedBoostEndTime: 0,
+      currentSpeedMultiplier: 0.4, // No initial boost from !eat mechanic
+      targetSpeedMultiplier: 1.5, // Standard target for !eat
+      boostActivationTime: 0,
+      isPrivileged: false, // Zergs are not privileged
+    };
+
+    eatTargets[zergUsername] = masterPlayer.username; // Attack their master
+    // No speed boost for Zerg as per user feedback (original !eat gives boostActivationTime)
+
+    players.push(newZerg);
+  }
+  console.log(
+    `Spawned ${SWARM_COUNT} Zerg for master ${masterPlayer.username}`
+  );
 }
 
 function drawParticles() {
@@ -669,15 +858,33 @@ function animate() {
     ctx.fill();
   }
 
-  for (const tree of spikedTrees) {
-    tree.x += tree.dx;
-    tree.y += tree.dy;
+  // --- MODIFIED SPIKED TREES UPDATE & DRAW LOOP ---
+  for (let i = spikedTrees.length - 1; i >= 0; i--) {
+    const tree = spikedTrees[i];
 
-    tree.x = (tree.x + canvas.width) % canvas.width;
-    tree.y = (tree.y + canvas.height) % canvas.height;
+    // Check for lifetime expiration for dropped orbiters (or any tree with these properties)
+    if (
+      tree.maxLifetime &&
+      tree.creationTime &&
+      Date.now() - tree.creationTime >= tree.maxLifetime
+    ) {
+      spikedTrees.splice(i, 1); // Remove the expired tree
+      continue; // Skip further processing for this tree, it's gone
+    }
 
+    // Existing tree movement logic (if any, or add if they should move like other trees)
+    // Assuming trees from `spikedTrees` array might have dx/dy for ambient movement:
+    if (typeof tree.dx === "number" && typeof tree.dy === "number") {
+      tree.x += tree.dx;
+      tree.y += tree.dy;
+      tree.x = (tree.x + canvas.width) % canvas.width;
+      tree.y = (tree.y + canvas.height) % canvas.height;
+    }
+
+    // Draw the tree
     drawSpikedTree(tree);
   }
+  // --- END MODIFIED LOOP ---
 
   if (
     spikedTrees.length < NUM_SPIKED_TREES &&
@@ -791,6 +998,7 @@ function animate() {
             avatar: player.avatar,
             isPiece: true,
             originalUsername: player.username,
+            master: player.username,
             spawnTime: Date.now(),
             canMergeTime: Date.now() + 15000,
             parentPreExplosionRadius: player.r,
@@ -881,6 +1089,74 @@ function animate() {
     }
     if (typeof p.lastPosition === "undefined") {
       p.lastPosition = { x: p.x, y: p.y };
+    }
+
+    // Orbiter Spawning Logic
+    if (
+      p.r >= 100 &&
+      !p.orbitingSpikeTree &&
+      !p.hasOrbiterSpawned &&
+      Date.now() >= p.nextOrbiterAvailableTime
+    ) {
+      // Added cooldown check
+      p.orbitingSpikeTree = {
+        r: SPIKED_TREE_RADIUS,
+        angle: Math.random() * Math.PI * 2,
+        spawnTime: Date.now(), // Initialize spawnTime
+        dropTimeout: Math.random() * 30000 + 30000, // Initialize random dropTimeout (30-60 seconds in ms)
+        // x and y are calculated during position update phase
+      };
+      p.hasOrbiterSpawned = true;
+      // Note: p.nextOrbiterAvailableTime is NOT reset here; it's set when an orbiter is lost/dropped.
+    }
+    // Orbiter Despawning Logic (if player shrinks)
+    else if (p.r < 100 && p.orbitingSpikeTree) {
+      p.orbitingSpikeTree = null;
+      p.hasOrbiterSpawned = false; // Allow respawn if they grow again
+    }
+
+    if (p.orbitingSpikeTree) {
+      // --- BEGIN NEW TIMED DROP LOGIC ---
+      if (
+        Date.now() - p.orbitingSpikeTree.spawnTime >=
+        p.orbitingSpikeTree.dropTimeout
+      ) {
+        // Time to drop the orbiter as a static tree
+        const droppedTree = {
+          x: p.orbitingSpikeTree.x, // Use last calculated world position
+          y: p.orbitingSpikeTree.y,
+          r: p.orbitingSpikeTree.r, // Should be SPIKED_TREE_RADIUS
+          dx: (Math.random() - 0.5) / 3, // Standard dx for new trees
+          dy: (Math.random() - 0.5) / 3, // Standard dy for new trees
+          creationTime: Date.now(),
+          maxLifetime: 60000, // 60 seconds in ms
+          // Optional: isDroppedOrbiter: true, // For easier identification if needed later
+        };
+        spikedTrees.push(droppedTree);
+
+        p.orbitingSpikeTree = null;
+        p.hasOrbiterSpawned = false; // Allow conditions for new spawn to be checked later
+        p.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown
+      } // --- END NEW TIMED DROP LOGIC ---
+
+      // Existing orbiter angle/position update logic follows here
+      // (make sure it's still guarded by `if (p.orbitingSpikeTree)`)
+      if (p.orbitingSpikeTree) {
+        // This 'if' is crucial if the drop happened above
+        p.orbitingSpikeTree.angle += 0.005;
+        if (p.orbitingSpikeTree.angle > Math.PI * 2) {
+          p.orbitingSpikeTree.angle -= Math.PI * 2;
+        }
+        const distanceToOrbiterCenter = p.r + p.orbitingSpikeTree.r;
+        p.orbitingSpikeTree.x =
+          p.x + Math.cos(p.orbitingSpikeTree.angle) * distanceToOrbiterCenter;
+        p.orbitingSpikeTree.y =
+          p.y + Math.sin(p.orbitingSpikeTree.angle) * distanceToOrbiterCenter;
+        p.orbitingSpikeTree.x =
+          (p.orbitingSpikeTree.x + canvas.width) % canvas.width;
+        p.orbitingSpikeTree.y =
+          (p.orbitingSpikeTree.y + canvas.height) % canvas.height;
+      }
     }
 
     if (p.isPiece) {
@@ -1322,6 +1598,77 @@ function animate() {
       }
     }
 
+    // --- BEGIN MASTER-BASED GRAVITATION ---
+    if (p.master) {
+      // Ensure player has a master property
+      let targetX = null;
+      let targetY = null;
+      let foundTarget = false;
+
+      // Try to find the main player instance of this master
+      const mainPlayerTarget = players.find(
+        (mp) => mp.username === p.master && !mp.isPiece
+      );
+
+      if (mainPlayerTarget && mainPlayerTarget !== p) {
+        targetX = mainPlayerTarget.x;
+        targetY = mainPlayerTarget.y;
+        foundTarget = true;
+      } else {
+        // If no main player target (or p is the main player, or main player is self and p is a piece)
+        // Calculate centroid of other pieces with the same master
+        let siblingCount = 0;
+        let sumX = 0;
+        let sumY = 0;
+        let referencePlayerForWrapping = p; // Use p as reference for wrapped centroid calculation
+
+        for (const otherP of players) {
+          if (otherP !== p && otherP.master === p.master) {
+            // Accumulate sums based on shortest path to reference player (p) to handle wrapping for centroid
+            // This is a more robust way to calculate a "wrapped centroid"
+            sumX +=
+              referencePlayerForWrapping.x +
+              getShortestDelta(
+                referencePlayerForWrapping.x,
+                otherP.x,
+                canvas.width
+              );
+            sumY +=
+              referencePlayerForWrapping.y +
+              getShortestDelta(
+                referencePlayerForWrapping.y,
+                otherP.y,
+                canvas.height
+              );
+            siblingCount++;
+          }
+        }
+
+        if (siblingCount > 0) {
+          targetX = sumX / siblingCount;
+          targetY = sumY / siblingCount;
+          foundTarget = true;
+        }
+      }
+
+      if (foundTarget) {
+        const vecX = getShortestDelta(p.x, targetX, canvas.width);
+        const vecY = getShortestDelta(p.y, targetY, canvas.height);
+        const dist = Math.hypot(vecX, vecY);
+
+        if (dist > 0) {
+          // Avoid division by zero and no pull if already at target
+          const normVecX = vecX / dist;
+          const normVecY = vecY / dist;
+          const MASTER_GRAVITATION_FORCE = 0.3; // Tunable constant force
+
+          p.dx += normVecX * MASTER_GRAVITATION_FORCE;
+          p.dy += normVecY * MASTER_GRAVITATION_FORCE;
+        }
+      }
+    }
+    // --- END MASTER-BASED GRAVITATION ---
+
     const baseSpeed = 1 * (30 / p.r);
     let actualSpeed = baseSpeed;
     const rampTime = 1000;
@@ -1364,6 +1711,88 @@ function animate() {
     actualSpeed = baseSpeed * p.currentSpeedMultiplier;
     p.dx = Math.max(-actualSpeed, Math.min(actualSpeed, p.dx));
     p.dy = Math.max(-actualSpeed, Math.min(actualSpeed, p.dy));
+
+    if (p.isStopping && p.canMoveAfterStopTime === 0) {
+      const slowdownDuration = 1500; // 1.5 seconds
+      const elapsedTime = Date.now() - p.stopStartTime;
+
+      if (elapsedTime < slowdownDuration) {
+        const slowdownFactor = 1 - elapsedTime / slowdownDuration;
+        p.dx = p.originalSpeedComponents.dx * slowdownFactor;
+        p.dy = p.originalSpeedComponents.dy * slowdownFactor;
+        p.currentSpeedMultiplier =
+          p.originalSpeedComponents.currentSpeedMultiplier * slowdownFactor;
+        p.currentSpeedMultiplier = Math.max(0, p.currentSpeedMultiplier);
+      } else {
+        p.dx = 0;
+        p.dy = 0;
+        p.currentSpeedMultiplier = 0;
+        p.canMoveAfterStopTime = Date.now() + 5000; // Stop for 5 seconds
+      }
+    } else if (
+      p.isStopping &&
+      p.canMoveAfterStopTime > 0 &&
+      Date.now() >= p.canMoveAfterStopTime
+    ) {
+      // Restore speed components
+      p.dx = p.originalSpeedComponents.dx;
+      p.dy = p.originalSpeedComponents.dy;
+      p.currentSpeedMultiplier =
+        p.originalSpeedComponents.currentSpeedMultiplier;
+
+      // Reset stopping-related flags and stored values
+      p.isStopping = false;
+      p.stopStartTime = 0;
+      p.canMoveAfterStopTime = 0;
+      p.originalSpeedComponents = { dx: 0, dy: 0, currentSpeedMultiplier: 1.0 }; // Reset to default
+    }
+
+    if (p.isPiece && p.canMergeTime && Date.now() < p.canMergeTime) {
+      for (const otherP of players) {
+        if (otherP === p) continue; // Don't compare with self
+
+        if (
+          otherP.isPiece &&
+          otherP.canMergeTime &&
+          Date.now() < otherP.canMergeTime &&
+          otherP.originalUsername === p.originalUsername
+        ) {
+          // Calculate shortest vector between p and otherP, considering wrapping
+          const deltaX = getShortestDelta(p.x, otherP.x, canvas.width);
+          const deltaY = getShortestDelta(p.y, otherP.y, canvas.height);
+          const distance = Math.hypot(deltaX, deltaY);
+          const minDistance = p.r + otherP.r;
+
+          if (distance < minDistance && distance > 0) {
+            // distance > 0 to avoid division by zero if somehow they are at the exact same spot
+            const overlap = minDistance - distance;
+            // Normalize the delta vector to get direction
+            const normDeltaX = deltaX / distance;
+            const normDeltaY = deltaY / distance;
+
+            // Push amount for each piece. Add a small epsilon to ensure separation.
+            const pushAmount = overlap / 2 + 0.1;
+
+            // Apply push to p (away from otherP)
+            p.x -= normDeltaX * pushAmount;
+            p.y -= normDeltaY * pushAmount;
+
+            // Apply push to otherP (away from p)
+            otherP.x += normDeltaX * pushAmount;
+            otherP.y += normDeltaY * pushAmount;
+
+            // It's important to handle canvas wrapping for positions AFTER direct modification
+            // However, the main loop already has p.x = (p.x + canvas.width) % canvas.width;
+            // This might lead to complex interactions if a push sends something far off.
+            // A simpler immediate wrap after push might be better for this specific adjustment.
+            p.x = (p.x + canvas.width) % canvas.width;
+            p.y = (p.y + canvas.height) % canvas.height;
+            otherP.x = (otherP.x + canvas.width) % canvas.width;
+            otherP.y = (otherP.y + canvas.height) % canvas.height;
+          }
+        }
+      }
+    }
 
     p.x += p.dx;
     p.y += p.dy;
@@ -1614,6 +2043,157 @@ function animate() {
     }
   }
 
+  // --- BEGIN NEW ORBITER COLLISION LOGIC ---
+  for (let i = players.length - 1; i >= 0; i--) {
+    const p_victim = players[i];
+    if (!p_victim) continue; // Should not happen with backward loop
+
+    let victimExplodedThisIteration = false; // Flag to ensure victim only explodes once per frame from an orbiter
+
+    for (let j = players.length - 1; j >= 0; j--) {
+      // Iterate backwards for j as well to handle potential p_owner removal if owners could explode themselves (not current scope)
+      // or if p_owner could be p_victim (which is checked)
+      if (i === j) continue; // Player cannot collide with their own orbiter in this context (p_owner !== p_victim)
+
+      const p_owner = players[j];
+      if (!p_owner || !p_owner.orbitingSpikeTree) {
+        continue;
+      }
+
+      const orbiter = p_owner.orbitingSpikeTree;
+
+      // Calculate shortest vector for collision detection
+      // orbiter.x and orbiter.y are already world positions and wrapped.
+      // p_victim.x and p_victim.y are also world positions and wrapped.
+      const deltaX = getShortestDelta(p_victim.x, orbiter.x, canvas.width);
+      const deltaY = getShortestDelta(p_victim.y, orbiter.y, canvas.height);
+      const distance = Math.hypot(deltaX, deltaY);
+
+      // Collision condition, using p_victim.r (no -10 offset here, direct collision)
+      // and p_victim.r > 50 (size condition for victim to explode)
+      if (distance < p_victim.r + orbiter.r && p_victim.r > 50) {
+        // Victim Explosion Logic (copied and adapted from existing player-spikedTree collision)
+        // Ensure variable names (like loop counters k) don't conflict if copy-pasting directly.
+        // Using k_pc for piece creation loop, k_particle for particle loop.
+
+        const R_min_for_more_pieces_exp = 50; // Suffix _exp to avoid conflict if constants exist elsewhere
+        const R_max_for_all_pieces_exp = 300;
+        const playerRadius_exp = p_victim.r;
+        let sizeFactor_exp = 0;
+        if (playerRadius_exp > R_min_for_more_pieces_exp) {
+          sizeFactor_exp = Math.min(
+            1,
+            (playerRadius_exp - R_min_for_more_pieces_exp) /
+              (R_max_for_all_pieces_exp - R_min_for_more_pieces_exp)
+          );
+        }
+        let numPieces_exp = 3 + Math.floor(sizeFactor_exp * 7);
+        const randomness_exp = Math.floor(Math.random() * 3) - 1;
+        numPieces_exp += randomness_exp;
+        numPieces_exp = Math.max(3, Math.min(10, numPieces_exp));
+
+        const pieceRadii_exp = [];
+        if (numPieces_exp > 0) {
+          const weights_exp = [];
+          let sumOfWeights_exp = 0;
+          const MIN_WEIGHT_exp = 0.1;
+          for (let k_pc = 0; k_pc < numPieces_exp; k_pc++) {
+            const weight_exp = MIN_WEIGHT_exp + Math.random() * 0.9;
+            weights_exp.push(weight_exp);
+            sumOfWeights_exp += weight_exp;
+          }
+          for (let k_pc = 0; k_pc < numPieces_exp; k_pc++) {
+            const normalizedWeight_exp = weights_exp[k_pc] / sumOfWeights_exp;
+            pieceRadii_exp.push(p_victim.r * Math.sqrt(normalizedWeight_exp));
+          }
+        }
+
+        for (let k_pc = 0; k_pc < numPieces_exp; k_pc++) {
+          const angle_exp =
+            (k_pc / numPieces_exp) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+          const currentPieceRadius_exp = pieceRadii_exp[k_pc];
+          players.push({
+            username: `${p_victim.username}_piece_${Date.now()}_${k_pc}`,
+            display_name: p_victim.display_name,
+            x: p_victim.x + (p_victim.r / 2) * Math.cos(angle_exp),
+            y: p_victim.y + (p_victim.r / 2) * Math.sin(angle_exp),
+            dx: Math.cos(angle_exp) * (2 + Math.random() * 2),
+            dy: Math.sin(angle_exp) * (2 + Math.random() * 2),
+            r: currentPieceRadius_exp,
+            targetR: currentPieceRadius_exp,
+            avatar: p_victim.avatar,
+            isPiece: true,
+            originalUsername: p_victim.username,
+            spawnTime: Date.now(),
+            canMergeTime: Date.now() + 15000,
+            parentPreExplosionRadius: p_victim.r,
+            master: p_victim.username, // Added master property
+            // Initialize new properties for pieces
+            isStopping: false,
+            stopStartTime: 0,
+            originalSpeedComponents: {
+              dx: 0,
+              dy: 0,
+              currentSpeedMultiplier: 1.0,
+            },
+            canMoveAfterStopTime: 0,
+            orbitingSpikeTree: null,
+            hasOrbiterSpawned: false,
+            nextOrbiterAvailableTime: 0, // Ensured nextOrbiterAvailableTime is here
+          });
+        }
+
+        for (let k_particle = 0; k_particle < 30; k_particle++) {
+          particles.push({
+            x: p_victim.x,
+            y: p_victim.y,
+            dx: (Math.random() - 0.5) * 8,
+            dy: (Math.random() - 0.5) * 8,
+            alpha: 1,
+            size: 3 + Math.random() * 3,
+            color: "orange",
+          });
+        }
+
+        if (players[i] === p_victim) {
+          // Check if player at index i is still the one we expect
+          players.splice(i, 1); // Remove victim player
+        }
+
+        p_owner.orbitingSpikeTree = null;
+        p_owner.hasOrbiterSpawned = false;
+        p_owner.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown for p_owner
+        // victimExplodedThisIteration = true; // This flag was noted as not strictly necessary if break is used
+        break; // Victim exploded, break from inner p_owner loop.
+      }
+    }
+    // Outer loop `i` will correctly decrement due to backward iteration,
+    // effectively moving to the next victim or finishing if victim was last.
+  }
+  // --- END NEW ORBITER COLLISION LOGIC ---
+
+  // --- BEGIN ZERG (AND OTHER TIMED PLAYER) LIFETIME CLEANUP ---
+  for (let i = players.length - 1; i >= 0; i--) {
+    const p = players[i];
+    // Check for lifetime expiration for players that have these properties (e.g., Zergs)
+    if (
+      p.maxLifetime &&
+      p.creationTime &&
+      Date.now() - p.creationTime >= p.maxLifetime
+    ) {
+      // Remove the expired player (Zerg)
+      // Also remove its eatTarget entry if it exists
+      if (eatTargets[p.username]) {
+        delete eatTargets[p.username];
+      }
+      players.splice(i, 1);
+      console.log(
+        `Despawned timed player: ${p.username} due to lifetime expiration.`
+      );
+    }
+  }
+  // --- END ZERG (AND OTHER TIMED PLAYER) LIFETIME CLEANUP ---
+
   players.sort((a, b) => a.r - b.r);
   for (const p of players) drawPlayer(p);
 
@@ -1672,7 +2252,7 @@ function animate() {
   ctx.fillStyle = "white";
   ctx.font = "18px sans-serif";
   ctx.textAlign = "left";
-  ctx.fillText("🏆 Resnīši (Mass):", 30, 45);
+  ctx.fillText("🏆 Resnīši (kg):", 30, 45);
 
   sortedScoreboardEntries
     .slice(0, entriesToDisplayCount)
