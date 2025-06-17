@@ -36,7 +36,7 @@ const colors = [
   "lime",
   "cyan",
 ];
-const NUM_SPIKED_TREES = 4;
+const NUM_SPIKED_TREES = 40;
 const SPIKED_TREE_RADIUS = 20;
 const SPIKED_TREE_RESPAWN_DELAY = 30000;
 let lastTreeRespawnTime = 0;
@@ -68,6 +68,7 @@ client.on("message", (channel, tags, message, self) => {
       play(tags);
     }
   }
+
   // play(tags);
   // if (Math.floor(Math.random() * 10) + 1 > 7) {
   //   if (players.length > 2) {
@@ -76,6 +77,12 @@ client.on("message", (channel, tags, message, self) => {
   //     console.log("Triggered attack on : ", target);
   //   }
   // }
+});
+
+console.log("Spawn kompots");
+play({
+  username: "imkompots",
+  subscriber: true,
 });
 
 async function getAppToken() {
@@ -312,15 +319,8 @@ async function play(data) {
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.src = profile_image_url; // Use the fetched profile image url
-
-      let isPrivilegedByBadge =
-        data.badges &&
-        (data.badges.subscriber ||
-          data.badges.vip ||
-          data.badges.moderator ||
-          data.badges.broadcaster ||
-          data.badges.editor);
-
+      console.log(data);
+      let isPrivilegedByBadge = data.subscriber;
       let isPrivilegedByFollow = false;
       if (followed_at) {
         const followDate = new Date(followed_at);
@@ -333,7 +333,7 @@ async function play(data) {
       }
 
       const finalIsPrivileged = !!(isPrivilegedByBadge || isPrivilegedByFollow);
-      const radius = 30;
+      const radius = 200;
       let x,
         y,
         safe = false;
@@ -454,7 +454,7 @@ function drawPlayer(p) {
   if (eatTargets[p.username] && p.trail) {
     for (const puff of p.trail) {
       const age = now - puff.time;
-      const life = 1000;
+      const life = 700;
       const alpha = Math.max(0, 1 - age / life);
       const radius = p.r * puff.sizeFactor * (1 + age / life);
 
@@ -473,7 +473,7 @@ function drawPlayer(p) {
               dx: dirX,
               dy: dirY,
               start: now,
-              life: 700,
+              life: 500,
               radius: 2 + Math.random() * 2,
             });
           }
@@ -494,7 +494,7 @@ function drawPlayer(p) {
 
             ctx.beginPath();
             ctx.arc(puffX + offsetX, puffY + offsetY, r, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(180,180,180,${alpha * 0.3})`;
+            ctx.fillStyle = `rgba(180,180,180,${alpha * 0.05})`;
             ctx.fill();
           }
 
@@ -710,7 +710,7 @@ function animate() {
       const dy = player.y - tree.y;
       const distance = Math.hypot(dx, dy);
 
-      if (distance < player.r / 3 + tree.r && player.r > 50) {
+      if (distance < player.r - 10 + tree.r && player.r > 50) {
         collidedWithTree = true;
 
         const numPieces = Math.max(2, Math.floor(player.r / 25));
@@ -760,7 +760,7 @@ function animate() {
     }
   }
 
-  const MERGE_TIME = 15000;
+  const MERGE_TIME = 30000;
   const usernamesToProcessForMerging = new Set();
 
   players.forEach((player) => {
@@ -800,7 +800,7 @@ function animate() {
     if (!primaryPlayer && userPieces.length > 0) {
       userPieces.sort((a, b) => {
         if (b.r !== a.r) {
-          return b.r - a.r;
+          return a.r - b.r;
         }
         return a.spawnTime - b.spawnTime;
       });
@@ -855,16 +855,13 @@ function animate() {
             );
             const distanceToCentroid = Math.hypot(dxToCentroid, dyToCentroid);
 
-            const CLUSTER_ATTRACTION_STRENGTH = 0.08;
-            const MIN_DISTANCE_TO_APPLY_FORCE = p.r * 1.05;
+            const CLUSTER_ATTRACTION_STRENGTH = 0.9;
+            const MIN_DISTANCE_TO_APPLY_FORCE = 1920;
 
             if (distanceToCentroid > MIN_DISTANCE_TO_APPLY_FORCE) {
               const normDx = dxToCentroid / distanceToCentroid;
               const normDy = dyToCentroid / distanceToCentroid;
-              const effectiveStrength =
-                CLUSTER_ATTRACTION_STRENGTH *
-                Math.min(distanceToCentroid / 1000.0, 1.0);
-
+              const effectiveStrength = 100;
               p.dx += normDx * effectiveStrength;
               p.dy += normDy * effectiveStrength;
               isAttractedToCluster = true;
@@ -873,7 +870,7 @@ function animate() {
         }
       }
 
-      const PIECE_FOOD_SEEK_RADIUS = p.r * 1;
+      const PIECE_FOOD_SEEK_RADIUS = 0;
       const PIECE_FOOD_ATTRACTION_STRENGTH = 0.01;
       let closestFood = null;
       let minDistToFood = PIECE_FOOD_SEEK_RADIUS;
