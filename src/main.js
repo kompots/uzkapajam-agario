@@ -1684,6 +1684,7 @@ function animate() {
       );
     });
 
+  console.log(players);
   const winner = players.find((p) => p.r >= 300);
   if (winner && !gameResetting) {
     winnerDiv.textContent = `🏆 ${winner.display_name} uzvarēja!`;
