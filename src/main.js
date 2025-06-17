@@ -4,6 +4,78 @@ import axios from "axios";
 
 const clientId = "31oc8pz2llwa1yqcb0elm85akj2wgx";
 const clientSecret = "1cjzpysdytcor6f3gvb38i1q7rtr54";
+const params = new URLSearchParams(window.location.search);
+const channel = params.get("channel") || "uzkapajam";
+const client = new tmi.Client({
+  connection: {
+    secure: true,
+    reconnect: true,
+  },
+  channels: [channel],
+});
+
+const tree_img = new Image();
+tree_img.crossOrigin = "anonymous";
+tree_img.src = "https://i.imgur.com/i7UkBx6.png";
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const winnerDiv = document.getElementById("winner");
+const players = [];
+const food = [];
+const spikedTrees = [];
+const eatTargets = {};
+const particles = [];
+const colors = [
+  "red",
+  "blue",
+  "green",
+  "yellow",
+  "orange",
+  "purple",
+  "lime",
+  "cyan",
+];
+const NUM_SPIKED_TREES = 4;
+const SPIKED_TREE_RADIUS = 20;
+const SPIKED_TREE_RESPAWN_DELAY = 30000;
+let lastTreeRespawnTime = 0;
+let gameResetting = false;
+
+canvas.width = 1;
+canvas.height = 1;
+
+client.connect();
+
+client.on("message", (channel, tags, message, self) => {
+  if (message.includes("!eat")) {
+    let parts = message.split(" ");
+    eatTargets[tags.username] = parts[1];
+    console.log(eatTargets);
+    const player = players.find((p) => p.username === tags.username);
+    if (player) {
+      player.speedBoostEndTime = Date.now() + 5000;
+      player.boostActivationTime = Date.now();
+    }
+  } else if (message === "!stop") {
+    delete eatTargets[tags.username];
+    const player = players.find((p) => p.username === tags.username);
+    if (player && player.boostActivationTime > 0) {
+      player.speedBoostEndTime = Date.now();
+    }
+  } else if (message === "!play") {
+    play(tags);
+  }
+  if (players.length < 101) {
+    play(tags);
+  }
+  // if (Math.floor(Math.random() * 10) + 1 > 7) {
+  //   if (players.length > 2) {
+  //     let target = players[Math.floor(Math.random() * players.length)].username;
+  //     eatTargets[tags.username] = target;
+  //     console.log("Triggered attack on : ", target);
+  //   }
+  // }
+});
 
 async function getAppToken() {
   const res = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -31,76 +103,8 @@ async function getUserProfilePicture(username) {
   return res.data.data[0]?.profile_image_url || null;
 }
 
-const params = new URLSearchParams(window.location.search);
-const channel = params.get("channel") || "uzkapajam";
-
-const client = new tmi.Client({
-  connection: {
-    secure: true,
-    reconnect: true,
-  },
-  channels: [channel],
-});
-
-client.connect();
-
-client.on("message", (channel, tags, message, self) => {
-  if (message.includes("!eat")) {
-    let parts = message.split(" ");
-    eatTargets[tags.username] = parts[1];
-    console.log(eatTargets);
-    const player = players.find((p) => p.username === tags.username);
-    if (player) {
-      player.speedBoostEndTime = Date.now() + 5000;
-      player.boostActivationTime = Date.now();
-    }
-  } else if (message === "!stop") {
-    delete eatTargets[tags.username];
-    const player = players.find((p) => p.username === tags.username);
-    if (player && player.boostActivationTime > 0) {
-      player.speedBoostEndTime = Date.now();
-    }
-  } else if (message === "!play") {
-    play(tags);
-  }
-  if (players.length < 101) {
-    play(tags);
-  }
-  if (Math.floor(Math.random() * 10) + 1 > 7) {
-    if (players.length > 2) {
-      let target = players[Math.floor(Math.random() * players.length)].username;
-      eatTargets[tags.username] = target;
-      console.log("Triggered attack on : ", target);
-    }
-  }
-});
-
-const tree_img = new Image();
-tree_img.crossOrigin = "anonymous";
-tree_img.src = "https://i.imgur.com/i7UkBx6.png";
-
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-const winnerDiv = document.getElementById("winner");
-canvas.width = 1;
-canvas.height = 1;
-
-const players = [];
-const food = [];
-const spikedTrees = [];
-const eatTargets = {};
-const particles = [];
-const colors = [
-  "red",
-  "blue",
-  "green",
-  "yellow",
-  "orange",
-  "purple",
-  "lime",
-  "cyan",
-];
-let gameResetting = false;
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
 
 function getShortestDelta(coord1, coord2, maxCoord) {
   const directDelta = coord2 - coord1;
@@ -118,11 +122,6 @@ function getShortestDelta(coord1, coord2, maxCoord) {
     return wrappedDelta2;
   }
 }
-
-const NUM_SPIKED_TREES = 4;
-const SPIKED_TREE_RADIUS = 20;
-const SPIKED_TREE_RESPAWN_DELAY = 30000;
-let lastTreeRespawnTime = 0;
 
 function trySpawnOneSpikedTree() {
   if (spikedTrees.length >= NUM_SPIKED_TREES) return false;
@@ -198,8 +197,6 @@ function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
 
 function drawSpikedTree(tree) {
   const baseRadius = SPIKED_TREE_RADIUS;
