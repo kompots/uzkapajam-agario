@@ -51,11 +51,18 @@ canvas.height = 1;
 client.connect();
 
 client.on("message", (channel, tags, message, self) => {
+  console.log(message.toLowerCase());
   if (message.includes("!eat")) {
     const player = players.find((p) => p.username === tags.username);
     if (player && player.isStopping) {
       return;
     } // Do nothing if player is stopping
+    if (player && isPlayerExploded(player.master)) {
+      console.log(
+        `Command !eat from ${player.username} ignored, player is exploded.`
+      );
+      return;
+    }
 
     let parts = message.split(" ");
     eatTargets[tags.username] = parts[1];
@@ -68,6 +75,12 @@ client.on("message", (channel, tags, message, self) => {
   } else if (message === "!stop") {
     const player = players.find((p) => p.username === tags.username);
     if (player) {
+      if (isPlayerExploded(player.master)) {
+        console.log(
+          `Command !stop from ${player.username} ignored, player is exploded.`
+        );
+        return;
+      }
       player.isStopping = true;
       player.stopStartTime = Date.now();
       player.originalSpeedComponents = {
@@ -88,29 +101,39 @@ client.on("message", (channel, tags, message, self) => {
     }
   } else if (message.toLowerCase() === "!bop") {
     const player = players.find((p) => p.username === tags.username);
+    if (player) {
+      // Check player exists first
+      if (isPlayerExploded(player.master)) {
+        console.log(
+          `Command !bop from ${player.username} ignored, player is exploded.`
+        );
+        return;
+      }
+      if (player.orbitingSpikeTree) {
+        // Player has an orbiter, let's drop it.
+        // This logic mirrors the timed drop.
 
-    if (player && player.orbitingSpikeTree) {
-      // Player has an orbiter, let's drop it.
-      // This logic mirrors the timed drop.
+        // Create a static tree from the orbiter
+        const droppedTree = {
+          x: player.orbitingSpikeTree.x, // Current world position of the orbiter
+          y: player.orbitingSpikeTree.y,
+          r: player.orbitingSpikeTree.r, // Radius of the orbiter (SPIKED_TREE_RADIUS)
+          dx: (Math.random() - 0.5) / 3, // Standard dx for new environmental trees
+          dy: (Math.random() - 0.5) / 3, // Standard dy for new environmental trees
+          creationTime: Date.now(),
+          maxLifetime: 60000, // 60 seconds in ms
+          ownerMaster: player.master, // Added property
+        };
+        spikedTrees.push(droppedTree);
 
-      // Create a static tree from the orbiter
-      const droppedTree = {
-        x: player.orbitingSpikeTree.x, // Current world position of the orbiter
-        y: player.orbitingSpikeTree.y,
-        r: player.orbitingSpikeTree.r, // Radius of the orbiter (SPIKED_TREE_RADIUS)
-        dx: (Math.random() - 0.5) / 3, // Standard dx for new environmental trees
-        dy: (Math.random() - 0.5) / 3, // Standard dy for new environmental trees
-        creationTime: Date.now(),
-        maxLifetime: 60000, // 60 seconds in ms
-      };
-      spikedTrees.push(droppedTree);
+        // Remove orbiter from player
+        player.orbitingSpikeTree = null;
+        player.hasOrbiterSpawned = false;
 
-      // Remove orbiter from player
-      player.orbitingSpikeTree = null;
-      player.hasOrbiterSpawned = false;
-
-      // Set player cooldown for getting a new orbiter
-      player.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown
+        // Set player cooldown for getting a new orbiter
+        player.nextOrbiterAvailableTime =
+          Date.now() + (Math.floor(Math.random() * 60_000) + 240_000);
+      }
     }
   } else if (message.toLowerCase() === "!zerg") {
     const player = players.find(
@@ -119,6 +142,12 @@ client.on("message", (channel, tags, message, self) => {
 
     if (player) {
       // Check if player exists and is a main player
+      if (isPlayerExploded(player.master)) {
+        console.log(
+          `Command !swarm from ${player.username} ignored, player is exploded.`
+        );
+        return;
+      }
       if (!player.hasUsedSwarm) {
         player.hasUsedSwarm = true;
         spawnZergSwarm(player); // Call the spawning function
@@ -145,11 +174,18 @@ client.on("message", (channel, tags, message, self) => {
   // }
 });
 
-// console.log("Spawn kompots");
 // play({
-//   username: "imkompots",
+//   username: "imkompots2",
 //   subscriber: true,
 // });
+
+// play({
+//   username: "sniegbaltiite",
+//   subscriber: true,
+// });
+
+// eatTargets["imkompots2"] = "sniegbaltiite";
+// eatTargets["sniegbaltiite"] = "imkompots2";
 
 async function getAppToken() {
   const res = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -249,6 +285,20 @@ function getShortestDelta(coord1, coord2, maxCoord) {
   } else {
     return wrappedDelta2;
   }
+}
+
+function isPlayerExploded(masterUsername) {
+  if (!masterUsername) {
+    // Should not happen if called correctly
+    return false;
+  }
+  let count = 0;
+  for (const p of players) {
+    if (p.master === masterUsername) {
+      count++;
+    }
+  }
+  return count > 1;
 }
 
 function trySpawnOneSpikedTree() {
@@ -385,7 +435,6 @@ async function play(data) {
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.src = profile_image_url; // Use the fetched profile image url
-      console.log(data);
       let isPrivilegedByBadge = data.subscriber;
       let isPrivilegedByFollow = false;
       if (followed_at) {
@@ -494,6 +543,35 @@ function spawnFood() {
 }
 
 function drawPlayer(p) {
+  // --- BEGIN SANITY CHECKS for drawPlayer ---
+  if (!p || typeof p.r === "undefined") {
+    // This checks if p is null/undefined or if p.r is missing, which is fundamental.
+    console.error(
+      "drawPlayer: Invalid or incomplete player object passed. Player data:",
+      p
+    );
+    return; // Skip drawing this object
+  }
+
+  if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.r) || p.r <= 0) {
+    // This checks for NaN, Infinity, or non-positive radius values.
+    // JSON.stringify might fail for Infinity/NaN, so log carefully.
+    console.error(
+      "drawPlayer: Attempted to draw player with non-finite or invalid properties.",
+      "x:",
+      p.x,
+      "y:",
+      p.y,
+      "r:",
+      p.r,
+      "username:",
+      p.username,
+      "isPiece:",
+      p.isPiece
+    );
+    return; // Skip drawing this object
+  }
+  // --- END SANITY CHECKS for drawPlayer ---
   p.r += (p.targetR - p.r) * 0.15;
 
   // Track player velocity
@@ -739,8 +817,8 @@ function drawPlayer(p) {
 }
 
 function spawnZergSwarm(masterPlayer) {
-  const SWARM_COUNT = 50;
-  const SWARM_RADIUS = 5;
+  const SWARM_COUNT = 10;
+  const SWARM_RADIUS = 10;
   // const SPAWN_CIRCLE_RADIUS = masterPlayer.r + 30; // This line can be removed
   const zergBaseUsername = `${masterPlayer.username}_Zerg_${Date.now()}`;
 
@@ -809,7 +887,8 @@ function spawnZergSwarm(masterPlayer) {
 
       orbitingSpikeTree: null,
       hasOrbiterSpawned: false, // Zergs don't get orbiters
-      nextOrbiterAvailableTime: Date.now() + 100 * 365 * 24 * 60 * 60 * 1000, // Effectively infinite cooldown
+      nextOrbiterAvailableTime:
+        Date.now() + (Math.floor(Math.random() * 60_000) + 240_000),
 
       hasUsedSwarm: true, // Zergs cannot use !swarm
 
@@ -920,8 +999,19 @@ function animate() {
       const distance = Math.hypot(dx, dy);
 
       if (distance < player.r - 10 + tree.r && player.r > 50) {
-        collidedWithTree = true;
+        // Standard collision criteria met
 
+        // --- BEGIN FRIENDLY FIRE CHECK FOR DROPPED (OWNED) TREES ---
+        if (tree.ownerMaster && player.master === tree.ownerMaster) {
+          // This tree was dropped by an entity related to this player's master.
+          // Friendly fire, so skip explosion.
+          collidedWithTree = false; // Ensure this is false if we skip explosion
+          continue; // Skips the explosion logic and moves to the next spikedTree
+        }
+        // --- END FRIENDLY FIRE CHECK FOR DROPPED (OWNED) TREES ---
+
+        // If the check above did not 'continue', then it's a hostile collision.
+        collidedWithTree = true; // This flag is part of original logic if player explodes
         // Determine number of pieces based on player size
         const R_min_for_more_pieces = 50; // Min radius to start getting more than 3 pieces
         const R_max_for_all_pieces = 300; // Radius at which player is likely to get max pieces (or close to it)
@@ -976,7 +1066,10 @@ function animate() {
 
           for (let i = 0; i < numPieces; i++) {
             const normalizedWeight = weights[i] / sumOfWeights;
-            let childRadius = player.r * Math.sqrt(normalizedWeight);
+            let childRadius = Math.max(
+              1.0,
+              player.r * Math.sqrt(normalizedWeight)
+            ); // MODIFIED line
             pieceRadii.push(childRadius);
           }
         }
@@ -1110,7 +1203,8 @@ function animate() {
       // Note: p.nextOrbiterAvailableTime is NOT reset here; it's set when an orbiter is lost/dropped.
     }
     // Orbiter Despawning Logic (if player shrinks)
-    else if (p.r < 100 && p.orbitingSpikeTree) {
+    else if (p.r < 100 && !p.isPiece && p.orbitingSpikeTree) {
+      // Added !p.isPiece condition
       p.orbitingSpikeTree = null;
       p.hasOrbiterSpawned = false; // Allow respawn if they grow again
     }
@@ -1130,13 +1224,15 @@ function animate() {
           dy: (Math.random() - 0.5) / 3, // Standard dy for new trees
           creationTime: Date.now(),
           maxLifetime: 60000, // 60 seconds in ms
+          ownerMaster: p.master, // Added property
           // Optional: isDroppedOrbiter: true, // For easier identification if needed later
         };
         spikedTrees.push(droppedTree);
 
         p.orbitingSpikeTree = null;
         p.hasOrbiterSpawned = false; // Allow conditions for new spawn to be checked later
-        p.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown
+        p.nextOrbiterAvailableTime =
+          Date.now() + (Math.floor(Math.random() * 60_000) + 240_000);
       } // --- END NEW TIMED DROP LOGIC ---
 
       // Existing orbiter angle/position update logic follows here
@@ -1669,7 +1765,9 @@ function animate() {
     }
     // --- END MASTER-BASED GRAVITATION ---
 
-    const baseSpeed = 1 * (30 / p.r);
+    // const baseSpeed = 1 * (30 / p.r); // Original line
+    const safeRadiusForSpeed = Math.max(1, p.r); // Ensure radius is at least 1 for speed calculation
+    const baseSpeed = 1 * (30 / safeRadiusForSpeed); // MODIFIED line
     let actualSpeed = baseSpeed;
     const rampTime = 1000;
 
@@ -2016,8 +2114,14 @@ function animate() {
             2
           )}.`
         );
-        p.r = p.parentPreExplosionRadius;
-        p.targetR = p.parentPreExplosionRadius;
+        // p.r = p.parentPreExplosionRadius; // OLD - Incorrectly resets to pre-explosion size.
+        // p.targetR = p.parentPreExplosionRadius; // OLD - Also incorrect.
+
+        // NEW LOGIC for r and targetR:
+        // Neither p.r nor p.targetR are modified here.
+        // p.targetR should have been correctly updated by prior logic (food eating, piece absorption).
+        // p.r will naturally animate towards p.targetR in drawPlayer().
+        // This block now only handles state changes (isPiece, username, cleanup) and dx/dy reset.
         console.log(
           `Reforming: Survivor piece radius set to r=${p.r.toFixed(
             2
@@ -2042,135 +2146,6 @@ function animate() {
       }
     }
   }
-
-  // --- BEGIN NEW ORBITER COLLISION LOGIC ---
-  for (let i = players.length - 1; i >= 0; i--) {
-    const p_victim = players[i];
-    if (!p_victim) continue; // Should not happen with backward loop
-
-    let victimExplodedThisIteration = false; // Flag to ensure victim only explodes once per frame from an orbiter
-
-    for (let j = players.length - 1; j >= 0; j--) {
-      // Iterate backwards for j as well to handle potential p_owner removal if owners could explode themselves (not current scope)
-      // or if p_owner could be p_victim (which is checked)
-      if (i === j) continue; // Player cannot collide with their own orbiter in this context (p_owner !== p_victim)
-
-      const p_owner = players[j];
-      if (!p_owner || !p_owner.orbitingSpikeTree) {
-        continue;
-      }
-
-      const orbiter = p_owner.orbitingSpikeTree;
-
-      // Calculate shortest vector for collision detection
-      // orbiter.x and orbiter.y are already world positions and wrapped.
-      // p_victim.x and p_victim.y are also world positions and wrapped.
-      const deltaX = getShortestDelta(p_victim.x, orbiter.x, canvas.width);
-      const deltaY = getShortestDelta(p_victim.y, orbiter.y, canvas.height);
-      const distance = Math.hypot(deltaX, deltaY);
-
-      // Collision condition, using p_victim.r (no -10 offset here, direct collision)
-      // and p_victim.r > 50 (size condition for victim to explode)
-      if (distance < p_victim.r + orbiter.r && p_victim.r > 50) {
-        // Victim Explosion Logic (copied and adapted from existing player-spikedTree collision)
-        // Ensure variable names (like loop counters k) don't conflict if copy-pasting directly.
-        // Using k_pc for piece creation loop, k_particle for particle loop.
-
-        const R_min_for_more_pieces_exp = 50; // Suffix _exp to avoid conflict if constants exist elsewhere
-        const R_max_for_all_pieces_exp = 300;
-        const playerRadius_exp = p_victim.r;
-        let sizeFactor_exp = 0;
-        if (playerRadius_exp > R_min_for_more_pieces_exp) {
-          sizeFactor_exp = Math.min(
-            1,
-            (playerRadius_exp - R_min_for_more_pieces_exp) /
-              (R_max_for_all_pieces_exp - R_min_for_more_pieces_exp)
-          );
-        }
-        let numPieces_exp = 3 + Math.floor(sizeFactor_exp * 7);
-        const randomness_exp = Math.floor(Math.random() * 3) - 1;
-        numPieces_exp += randomness_exp;
-        numPieces_exp = Math.max(3, Math.min(10, numPieces_exp));
-
-        const pieceRadii_exp = [];
-        if (numPieces_exp > 0) {
-          const weights_exp = [];
-          let sumOfWeights_exp = 0;
-          const MIN_WEIGHT_exp = 0.1;
-          for (let k_pc = 0; k_pc < numPieces_exp; k_pc++) {
-            const weight_exp = MIN_WEIGHT_exp + Math.random() * 0.9;
-            weights_exp.push(weight_exp);
-            sumOfWeights_exp += weight_exp;
-          }
-          for (let k_pc = 0; k_pc < numPieces_exp; k_pc++) {
-            const normalizedWeight_exp = weights_exp[k_pc] / sumOfWeights_exp;
-            pieceRadii_exp.push(p_victim.r * Math.sqrt(normalizedWeight_exp));
-          }
-        }
-
-        for (let k_pc = 0; k_pc < numPieces_exp; k_pc++) {
-          const angle_exp =
-            (k_pc / numPieces_exp) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-          const currentPieceRadius_exp = pieceRadii_exp[k_pc];
-          players.push({
-            username: `${p_victim.username}_piece_${Date.now()}_${k_pc}`,
-            display_name: p_victim.display_name,
-            x: p_victim.x + (p_victim.r / 2) * Math.cos(angle_exp),
-            y: p_victim.y + (p_victim.r / 2) * Math.sin(angle_exp),
-            dx: Math.cos(angle_exp) * (2 + Math.random() * 2),
-            dy: Math.sin(angle_exp) * (2 + Math.random() * 2),
-            r: currentPieceRadius_exp,
-            targetR: currentPieceRadius_exp,
-            avatar: p_victim.avatar,
-            isPiece: true,
-            originalUsername: p_victim.username,
-            spawnTime: Date.now(),
-            canMergeTime: Date.now() + 15000,
-            parentPreExplosionRadius: p_victim.r,
-            master: p_victim.username, // Added master property
-            // Initialize new properties for pieces
-            isStopping: false,
-            stopStartTime: 0,
-            originalSpeedComponents: {
-              dx: 0,
-              dy: 0,
-              currentSpeedMultiplier: 1.0,
-            },
-            canMoveAfterStopTime: 0,
-            orbitingSpikeTree: null,
-            hasOrbiterSpawned: false,
-            nextOrbiterAvailableTime: 0, // Ensured nextOrbiterAvailableTime is here
-          });
-        }
-
-        for (let k_particle = 0; k_particle < 30; k_particle++) {
-          particles.push({
-            x: p_victim.x,
-            y: p_victim.y,
-            dx: (Math.random() - 0.5) * 8,
-            dy: (Math.random() - 0.5) * 8,
-            alpha: 1,
-            size: 3 + Math.random() * 3,
-            color: "orange",
-          });
-        }
-
-        if (players[i] === p_victim) {
-          // Check if player at index i is still the one we expect
-          players.splice(i, 1); // Remove victim player
-        }
-
-        p_owner.orbitingSpikeTree = null;
-        p_owner.hasOrbiterSpawned = false;
-        p_owner.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown for p_owner
-        // victimExplodedThisIteration = true; // This flag was noted as not strictly necessary if break is used
-        break; // Victim exploded, break from inner p_owner loop.
-      }
-    }
-    // Outer loop `i` will correctly decrement due to backward iteration,
-    // effectively moving to the next victim or finishing if victim was last.
-  }
-  // --- END NEW ORBITER COLLISION LOGIC ---
 
   // --- BEGIN ZERG (AND OTHER TIMED PLAYER) LIFETIME CLEANUP ---
   for (let i = players.length - 1; i >= 0; i--) {
@@ -2264,7 +2239,6 @@ function animate() {
       );
     });
 
-  console.log(players);
   const winner = players.find((p) => p.r >= 300);
   if (winner && !gameResetting) {
     winnerDiv.textContent = `🏆 ${winner.display_name} uzvarēja!`;
@@ -2280,41 +2254,6 @@ function animate() {
       requestAnimationFrame(animate);
     }, 10000);
     return;
-  }
-
-  if (debugPlayerListCounter > 0) {
-    console.log(
-      `--- Player List Snapshot (Frames remaining to log: ${debugPlayerListCounter}) ---`
-    );
-    if (players.length === 0) {
-      console.log("Player list is empty.");
-    } else {
-      players.forEach((p_diag, index) => {
-        let diagInfo = `#${index} - User: "${p_diag.username}", Piece: ${
-          p_diag.isPiece
-        }, R: ${p_diag.r.toFixed(2)}, mass: ${Math.round(p_diag.r * p_diag.r)}`;
-        if (p_diag.isPiece) {
-          diagInfo += `, OrigUser: "${p_diag.originalUsername || "N/A"}"`;
-          if (typeof p_diag.parentPreExplosionRadius !== "undefined") {
-            diagInfo += `, parentR: ${p_diag.parentPreExplosionRadius.toFixed(
-              2
-            )}`;
-          }
-          if (typeof p_diag.canMergeTime !== "undefined") {
-            const mergeTimeDelta = (p_diag.canMergeTime - Date.now()) / 1000;
-            diagInfo += `, mergeIn: ${mergeTimeDelta.toFixed(1)}s`;
-          } else {
-            diagInfo += `, canMergeTime: N/A`;
-          }
-        }
-        console.log(diagInfo);
-      });
-    }
-    console.log(`--- End Snapshot (Total players: ${players.length}) ---`);
-    debugPlayerListCounter--;
-    if (debugPlayerListCounter === 0) {
-      console.log("Player list logging deactivated.");
-    }
   }
   requestAnimationFrame(animate);
 }
