@@ -49,8 +49,17 @@ client.on("message", (channel, tags, message, self) => {
     let parts = message.split(" ");
     eatTargets[tags.username] = parts[1];
     console.log(eatTargets);
+    const player = players.find((p) => p.username === tags.username);
+    if (player) {
+      player.speedBoostEndTime = Date.now() + 5000;
+      player.boostActivationTime = Date.now();
+    }
   } else if (message === "!stop") {
     delete eatTargets[tags.username];
+    const player = players.find((p) => p.username === tags.username);
+    if (player && player.boostActivationTime > 0) {
+      player.speedBoostEndTime = Date.now();
+    }
   } else if (message === "!play") {
     play(tags);
   }
@@ -79,7 +88,6 @@ canvas.height = 1;
 const players = [];
 const food = [];
 const spikedTrees = [];
-// const explodedPlayerPieces = []; // Removed as pieces are now in 'players'
 const eatTargets = {};
 const particles = [];
 const colors = [
@@ -94,12 +102,9 @@ const colors = [
 ];
 let gameResetting = false;
 
-// Helper function to calculate the shortest path considering screen wrapping
 function getShortestDelta(coord1, coord2, maxCoord) {
   const directDelta = coord2 - coord1;
-  // Test wrapping in one direction (e.g., target appears on the right after wrapping from the left)
   const wrappedDelta1 = coord2 + maxCoord - coord1;
-  // Test wrapping in the other direction (e.g., target appears on the left after wrapping from the right)
   const wrappedDelta2 = coord2 - maxCoord - coord1;
 
   if (
@@ -116,11 +121,11 @@ function getShortestDelta(coord1, coord2, maxCoord) {
 
 const NUM_SPIKED_TREES = 4;
 const SPIKED_TREE_RADIUS = 20;
-const SPIKED_TREE_RESPAWN_DELAY = 30000; // 15 seconds
+const SPIKED_TREE_RESPAWN_DELAY = 30000;
 let lastTreeRespawnTime = 0;
 
 function trySpawnOneSpikedTree() {
-  if (spikedTrees.length >= NUM_SPIKED_TREES) return false; // Already full
+  if (spikedTrees.length >= NUM_SPIKED_TREES) return false;
 
   const margin = SPIKED_TREE_RADIUS * 2;
   let x,
@@ -133,15 +138,12 @@ function trySpawnOneSpikedTree() {
       (tree) =>
         Math.hypot(tree.x - x, tree.y - y) < tree.r + SPIKED_TREE_RADIUS + 20
     );
-    // Also check against players to avoid spawning on top of them (optional but good)
     if (safe) {
       safe = !players.some(
         (p) => Math.hypot(p.x - x, p.y - y) < p.r + SPIKED_TREE_RADIUS + 20
       );
     }
     if (safe) {
-      // safe = !explodedPlayerPieces.some(p => Math.hypot(p.x - x, p.y - y) < p.r + SPIKED_TREE_RADIUS + 20);
-      // Check against all players, including pieces, as they are now in the same array
       safe = !players.some(
         (p) => Math.hypot(p.x - x, p.y - y) < p.r + SPIKED_TREE_RADIUS + 20
       );
@@ -153,38 +155,37 @@ function trySpawnOneSpikedTree() {
       x,
       y,
       r: SPIKED_TREE_RADIUS,
+      dx: (Math.random() - 0.5) / 3,
+      dy: (Math.random() - 0.5) / 3,
     });
-    return true; // Successfully spawned one tree
+    return true;
   }
-  return false; // Could not find a spot
+  return false;
 }
 
 function spawnSpikedTrees() {
-  const margin = SPIKED_TREE_RADIUS * 2; // Ensure trees are not too close to edges
+  const margin = SPIKED_TREE_RADIUS * 2;
   while (spikedTrees.length < NUM_SPIKED_TREES) {
     let x,
       y,
       safe = false;
     for (let attempts = 0; attempts < 20 && !safe; attempts++) {
-      // Try 20 times to find a spot
       x = Math.random() * (canvas.width - 2 * margin) + margin;
       y = Math.random() * (canvas.height - 2 * margin) + margin;
-      // Check for overlap with other spiked trees
       safe = !spikedTrees.some(
         (tree) =>
           Math.hypot(tree.x - x, tree.y - y) < tree.r + SPIKED_TREE_RADIUS + 20
       );
-      // Optional: Check for overlap with initial player spawn areas if necessary (for now, just other trees)
     }
     if (safe) {
       spikedTrees.push({
         x,
         y,
         r: SPIKED_TREE_RADIUS,
+        dx: (Math.random() - 0.5) / 3,
+        dy: (Math.random() - 0.5) / 3,
       });
     } else {
-      // Could not find a safe spot for a tree after several attempts
-      // This might happen if the canvas is too small or NUM_SPIKED_TREES is too high
       console.warn(
         "Could not place a spiked tree. Canvas might be too crowded."
       );
@@ -201,28 +202,21 @@ window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
 function drawSpikedTree(tree) {
-  // Pulsation logic
-  const baseRadius = SPIKED_TREE_RADIUS; // Base radius for pulsation
-  const animationSpeed = 1500; // milliseconds for one full pulsation cycle (approx)
-  const scaleFactor = 0.2; // Max increase factor (0.5 means 50% larger)
+  const baseRadius = SPIKED_TREE_RADIUS;
+  const animationSpeed = 1500;
+  const scaleFactor = 0.2;
 
-  // Calculate current scale based on time
-  // (Math.sin(...) + 1) / 2 maps sin's -1 to 1 range to 0 to 1 range
   const currentScale =
     (Math.sin(Date.now() / (animationSpeed / (2 * Math.PI))) + 1) / 2;
 
-  // Apply the animated radius to tree.r for this frame
-  // This change will affect drawing and collision detection as tree.r is used elsewhere.
   tree.r = baseRadius + baseRadius * scaleFactor * currentScale;
 
-  const numSpikes = 12; // Number of spikes around the tree
-  const spikeLength = tree.r * 0.3; // Length of the spikes
-  // const spikeBaseWidth = tree.r * 0.3; // Width of the base of each spike // Not used in current spike drawing
+  const numSpikes = 12;
+  const spikeLength = tree.r * 0.3;
 
-  // Draw the main body of the tree (circle)
   ctx.beginPath();
   ctx.arc(tree.x, tree.y, tree.r, 0, Math.PI * 2);
-  ctx.fillStyle = "black"; // Or any other tree-like color
+  ctx.fillStyle = "black";
   ctx.fill();
   ctx.strokeStyle = "darkpurple";
   ctx.lineWidth = 3;
@@ -235,15 +229,13 @@ function drawSpikedTree(tree) {
     tree.r * 2
   );
 
-  // Draw spikes
   for (let i = 0; i < numSpikes; i++) {
     const angle = (i / numSpikes) * Math.PI * 2;
 
-    // More pointy spikes by adjusting control points for a triangle
-    const outerPointX = tree.x + Math.cos(angle) * (tree.r + spikeLength * 1.5); // Make spikes more pointy
+    const outerPointX = tree.x + Math.cos(angle) * (tree.r + spikeLength * 1.5);
     const outerPointY = tree.y + Math.sin(angle) * (tree.r + spikeLength * 1.5);
 
-    const baseAngleOffset = (Math.PI / numSpikes) * 0.5; // Adjust for spike width
+    const baseAngleOffset = (Math.PI / numSpikes) * 0.5;
 
     const point1X = tree.x + Math.cos(angle - baseAngleOffset) * tree.r;
     const point1Y = tree.y + Math.sin(angle - baseAngleOffset) * tree.r;
@@ -252,17 +244,13 @@ function drawSpikedTree(tree) {
     const point2Y = tree.y + Math.sin(angle + baseAngleOffset) * tree.r;
 
     ctx.beginPath();
-    ctx.moveTo(outerPointX, outerPointY); // Tip of the spike
-    ctx.lineTo(point1X, point1Y); // Base point 1
-    ctx.lineTo(point2X, point2Y); // Base point 2
+    ctx.moveTo(outerPointX, outerPointY);
+    ctx.lineTo(point1X, point1Y);
+    ctx.lineTo(point2X, point2Y);
     ctx.closePath();
 
-    ctx.fillStyle = "purple"; // Color of the spikes
+    ctx.fillStyle = "purple";
     ctx.fill();
-    // Optional: Add a stroke to spikes
-    // ctx.strokeStyle = "darkgreen";
-    // ctx.lineWidth = 1;
-    // ctx.stroke();
   }
 }
 
@@ -293,16 +281,20 @@ async function play(data) {
       r: radius,
       targetR: radius,
       avatar: img,
-      isPiece: false, // Explicitly set for normal players
-      originalUsername: data.username, // Or null, let's use own username for consistency
-      spawnTime: Date.now(), // Can be useful for all players
+      isPiece: false,
+      originalUsername: data.username,
+      spawnTime: Date.now(),
       stagnationCounter: 0,
       lastPosition: { x, y },
+      speedBoostEndTime: 0,
+      currentSpeedMultiplier: 1.0,
+      targetSpeedMultiplier: 1.5,
+      boostActivationTime: 0,
     };
 
     const existing = players.find(
       (p) => p.username === data.username && !p.isPiece
-    ); // Ensure we don't overwrite a piece with a new player
+    );
     if (!existing) {
       players.push(player);
     }
@@ -310,9 +302,8 @@ async function play(data) {
 }
 
 function spawnFood() {
-  const foodSpawnMargin = 4; // Margin from canvas edges
-  // const spikedTreeAvoidanceRadius = SPIKED_TREE_RADIUS + foodRadius + 10; // tree.r + food.r + buffer. Not directly used, but documents the value
-  let attemptsToSpawn = 0; // To prevent infinite loops if space is very limited. Max 200 attempts for all food.
+  const foodSpawnMargin = 4;
+  let attemptsToSpawn = 0;
 
   while (food.length < 120 && attemptsToSpawn < 200) {
     let foodRadius = Math.floor(Math.random() * 9) + 2;
@@ -320,7 +311,7 @@ function spawnFood() {
     let x,
       y,
       safeToSpawn = false;
-    let placementAttempts = 0; // Attempts to find a safe spot for the current food item
+    let placementAttempts = 0;
 
     while (!safeToSpawn && placementAttempts < 10) {
       placementAttempts++;
@@ -328,11 +319,9 @@ function spawnFood() {
         Math.random() * (canvas.width - 2 * foodSpawnMargin) + foodSpawnMargin;
       y =
         Math.random() * (canvas.height - 2 * foodSpawnMargin) + foodSpawnMargin;
-      safeToSpawn = true; // Assume safe until proven otherwise
+      safeToSpawn = true;
 
-      // Check proximity to spiked trees
       for (const tree of spikedTrees) {
-        // SPIKED_TREE_RADIUS is globally defined as 20. tree.r should also be SPIKED_TREE_RADIUS
         if (Math.hypot(x - tree.x, y - tree.y) < tree.r + foodRadius + 10) {
           safeToSpawn = false;
           break;
@@ -354,7 +343,7 @@ function spawnFood() {
 }
 
 function drawPlayer(p) {
-  p.r += (p.targetR - p.r) * 0.15; // Smooth radius change
+  p.r += (p.targetR - p.r) * 0.15;
 
   const offsets = [-canvas.width, 0, canvas.width];
   for (const dx_offset of offsets) {
@@ -365,18 +354,59 @@ function drawPlayer(p) {
       ctx.beginPath();
       ctx.arc(drawX, drawY, p.r, 0, Math.PI * 2);
 
-      if (p.isPiece) {
-        // Changed from p.isExplodedPiece
-        ctx.strokeStyle = "rgba(200, 200, 200, 0.7)"; // Lighter border for pieces
-        ctx.lineWidth = 1.5;
+      const isAttacker = eatTargets[p.username];
+      let currentLineWidth = 1;
+
+      if (isAttacker) {
+        const animationSpeed = 1000;
+        const pulsationFactor =
+          (Math.sin(Date.now() / (animationSpeed / (2 * Math.PI))) + 1) / 2;
+
+        ctx.strokeStyle = "red";
+        currentLineWidth = 3 + pulsationFactor * 3;
+        ctx.lineWidth = currentLineWidth;
+      } else if (p.isPiece) {
+        ctx.strokeStyle = "rgba(200, 200, 200, 0.7)";
+        currentLineWidth = 1.5;
+        ctx.lineWidth = currentLineWidth;
       } else {
         ctx.strokeStyle = "grey";
-        ctx.lineWidth = 1;
+        currentLineWidth = 1;
+        ctx.lineWidth = currentLineWidth;
       }
       ctx.stroke();
 
+      if (isAttacker) {
+        const animationSpeed = 1000;
+        const pulsationFactor =
+          (Math.sin(Date.now() / (animationSpeed / (2 * Math.PI))) + 1) / 2;
+        const baseAlpha = 0.3;
+        const pulseAlpha = 0.4 * pulsationFactor;
+
+        const attackerGradient = ctx.createRadialGradient(
+          drawX,
+          drawY,
+          0,
+          drawX,
+          drawY,
+          p.r
+        );
+        attackerGradient.addColorStop(
+          0,
+          `rgba(255, 0, 0, ${baseAlpha + pulseAlpha / 2})`
+        );
+        attackerGradient.addColorStop(
+          0.7,
+          `rgba(255, 0, 0, ${baseAlpha + pulseAlpha})`
+        );
+        attackerGradient.addColorStop(1, `rgba(200, 0, 0, ${baseAlpha})`);
+
+        ctx.fillStyle = attackerGradient;
+        ctx.fill();
+      }
+
       ctx.save();
-      ctx.beginPath(); // Re-path for clipping
+      ctx.beginPath();
       ctx.arc(drawX, drawY, p.r, 0, Math.PI * 2);
       ctx.clip();
 
@@ -384,21 +414,19 @@ function drawPlayer(p) {
         try {
           ctx.drawImage(p.avatar, drawX - p.r, drawY - p.r, p.r * 2, p.r * 2);
         } catch (e) {
-          // Fallback if drawImage fails (e.g. tainted canvas for certain SVGs)
           ctx.fillStyle = p.isPiece
             ? "rgba(120,120,120,0.5)"
-            : "rgba(80,80,80,0.6)"; // Changed from p.isExplodedPiece
-          ctx.fill(); // Fills the clipped arc
+            : "rgba(80,80,80,0.6)";
+          ctx.fill();
         }
       } else {
-        // Fallback if avatar not loaded or missing
         ctx.fillStyle = p.isPiece
           ? "rgba(120,120,120,0.5)"
-          : "rgba(80,80,80,0.6)"; // Changed from p.isExplodedPiece
-        ctx.fill(); // Fills the clipped arc
+          : "rgba(80,80,80,0.6)";
+        ctx.fill();
       }
 
-      const gradient = ctx.createRadialGradient(
+      const originalGradient = ctx.createRadialGradient(
         drawX,
         drawY,
         0,
@@ -406,11 +434,11 @@ function drawPlayer(p) {
         drawY,
         p.r
       );
-      gradient.addColorStop(0, "rgba(0, 0, 0, 0)"); // Center: no blur
-      gradient.addColorStop(0.7, "rgba(0, 0, 0, 0)"); // Mid-radius: no blur
-      gradient.addColorStop(1, "rgba(0, 0, 0, 0.2)"); // Edge: soft darkening
+      originalGradient.addColorStop(0, "rgba(0, 0, 0, 0)");
+      originalGradient.addColorStop(0.7, "rgba(0, 0, 0, 0)");
+      originalGradient.addColorStop(1, "rgba(0, 0, 0, 0.2)");
 
-      ctx.fillStyle = gradient;
+      ctx.fillStyle = originalGradient;
       ctx.fillRect(drawX - p.r, drawY - p.r, p.r * 2, p.r * 2);
       ctx.restore();
 
@@ -418,7 +446,7 @@ function drawPlayer(p) {
       ctx.font = `${p.r / 3}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.lineWidth = 4;
+      ctx.lineWidth = currentLineWidth + 2.5;
       ctx.strokeStyle = "black";
       ctx.strokeText(p.display_name, drawX, drawY);
       ctx.fillText(p.display_name, drawX, drawY);
@@ -445,8 +473,20 @@ function drawParticles() {
 function animate() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Draw spiked trees
+  for (const f of food) {
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+    ctx.fillStyle = f.color;
+    ctx.fill();
+  }
+
   for (const tree of spikedTrees) {
+    tree.x += tree.dx;
+    tree.y += tree.dy;
+
+    tree.x = (tree.x + canvas.width) % canvas.width;
+    tree.y = (tree.y + canvas.height) % canvas.height;
+
     drawSpikedTree(tree);
   }
 
@@ -473,7 +513,6 @@ function animate() {
     }
   }
 
-  // Player-Spiked Tree Collision
   for (let i = players.length - 1; i >= 0; i--) {
     const player = players[i];
     let collidedWithTree = false;
@@ -485,43 +524,36 @@ function animate() {
       const distance = Math.hypot(dx, dy);
 
       if (distance < player.r / 3 + tree.r && player.r > 50) {
-        // Collision occurred
         collidedWithTree = true;
 
-        const numPieces = Math.max(2, Math.floor(player.r / 25)); // Ensure at least 2 pieces
-        const pieceBaseRadius = player.r / numPieces; // This is a simplification, area-based would be more accurate but complex for now
+        const numPieces = Math.max(2, Math.floor(player.r / 25));
+        const pieceBaseRadius = player.r / numPieces;
 
         for (let k = 0; k < numPieces; k++) {
           const angle =
-            (k / numPieces) * Math.PI * 2 + (Math.random() - 0.5) * 0.5; // Spread pieces out
-          const pieceRadius = pieceBaseRadius * (0.8 + Math.random() * 0.65); // Slight size variation
+            (k / numPieces) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+          const pieceRadius = pieceBaseRadius * (0.8 + Math.random() * 0.65);
 
           players.push({
-            // Standard player properties:
-            username: `${player.username}_piece_${Date.now()}_${k}`, // Unique username for the piece itself
-            display_name: player.display_name, // Inherit display name
+            username: `${player.username}_piece_${Date.now()}_${k}`,
+            display_name: player.display_name,
             x: player.x + (player.r / 2) * Math.cos(angle),
             y: player.y + (player.r / 2) * Math.sin(angle),
-            dx: Math.cos(angle) * (2 + Math.random() * 2), // Explode outwards
+            dx: Math.cos(angle) * (2 + Math.random() * 2),
             dy: Math.sin(angle) * (2 + Math.random() * 2),
             r: pieceRadius,
             targetR: pieceRadius,
-            avatar: player.avatar, // Inherit avatar
-
-            // New properties for pieces:
+            avatar: player.avatar,
             isPiece: true,
-            originalUsername: player.username, // Link to the original player
-            spawnTime: Date.now(), // For re-merging logic later
+            originalUsername: player.username,
+            spawnTime: Date.now(),
           });
         }
 
-        // Remove the original player
         players.splice(i, 1);
 
-        // Remove the spiked tree (or mark inactive, for now, remove)
         spikedTrees.splice(j, 1);
 
-        // Spawn particles for explosion effect
         for (let k = 0; k < 30; k++) {
           particles.push({
             x: player.x,
@@ -530,31 +562,20 @@ function animate() {
             dy: (Math.random() - 0.5) * 8,
             alpha: 1,
             size: 3 + Math.random() * 3,
-            color: "orange", // Explosion particle color
+            color: "orange",
           });
         }
 
-        break; // Player can only hit one tree at a time, exit inner loop
+        break;
       }
     }
     if (collidedWithTree) {
-      // Player was removed, so the loop continues from the new `i`
-      // No need to `continue` here as `players.splice(i,1)` handles the iteration correctly for a reverse loop
     }
   }
 
-  // Update and manage exploded player pieces
-  // This loop is now part of the main players loop. The logic for attraction and merging will be adapted.
-  // for (let i = explodedPlayerPieces.length - 1; i >= 0; i--) { ... } // REMOVE THIS LOOP STRUCTURE
-
-  // The MERGE_TIME and related logic will need to be re-evaluated or moved.
-  // For now, we remove the specific explodedPlayerPieces loop.
-  // Attraction and merging logic will be addressed in subsequent steps based on the new structure.
-
-  const MERGE_TIME = 15000; // 1 minute
+  const MERGE_TIME = 15000;
   const usernamesToProcessForMerging = new Set();
 
-  // Iterate over all players to find pieces eligible for merging
   players.forEach((player) => {
     if (player.isPiece && Date.now() - player.spawnTime > MERGE_TIME) {
       usernamesToProcessForMerging.add(player.originalUsername);
@@ -562,13 +583,11 @@ function animate() {
   });
 
   for (const username of usernamesToProcessForMerging) {
-    // Check if the original player (non-piece) is active
     const originalPlayerActive = players.some(
       (p) => p.username === username && !p.isPiece
     );
 
     if (originalPlayerActive) {
-      // Original player is active, remove old pieces of this user
       for (let i = players.length - 1; i >= 0; i--) {
         if (
           players[i].isPiece &&
@@ -578,10 +597,9 @@ function animate() {
           players.splice(i, 1);
         }
       }
-      continue; // Move to the next username
+      continue;
     }
 
-    // Original player is not active, proceed with new merging logic
     let primaryPlayer = players.find(
       (p) => p.username === username && !p.isPiece
     );
@@ -590,40 +608,20 @@ function animate() {
         p.isPiece &&
         p.originalUsername === username &&
         Date.now() - p.spawnTime > MERGE_TIME
-      //Pieces are already filtered by MERGE_TIME to be added to usernamesToProcessForMerging
-      //but double check here won't hurt, or could be removed if performance critical
     );
 
     if (!primaryPlayer && userPieces.length > 0) {
-      // Designate a primary player if one doesn't exist
       userPieces.sort((a, b) => {
         if (b.r !== a.r) {
-          return b.r - a.r; // Sort by radius descending
+          return b.r - a.r;
         }
-        return a.spawnTime - b.spawnTime; // Then by spawn time ascending
+        return a.spawnTime - b.spawnTime;
       });
 
-      primaryPlayer = userPieces[0]; // Largest/oldest piece becomes primary
+      primaryPlayer = userPieces[0];
       primaryPlayer.isPiece = false;
       primaryPlayer.username = primaryPlayer.originalUsername;
-      // display_name, avatar, x, y, r, targetR, dx, dy, originalUsername, spawnTime are retained.
-      // No need to remove it from userPieces here.
-      // The piece that became primary will not attract other pieces to itself in this loop,
-      // nor will it be attracted in the player update loop as isPiece is false.
     }
-    // If a primaryPlayer exists (either found or just designated),
-    // all eligible userPieces (isPiece: true, originalUsername matches, past MERGE_TIME)
-    // will be handled by the attraction/absorption logic in the main player update loop.
-    // No players are removed or created here in this new logic.
-    // The old logic of removing pieces here and creating a new merged player is now gone.
-  }
-
-  for (const f of food) {
-    // let centroidY = 0; // centroidY was unused, removing
-    ctx.beginPath();
-    ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
-    ctx.fillStyle = f.color;
-    ctx.fill();
   }
 
   for (const p of players) {
@@ -633,26 +631,13 @@ function animate() {
     if (typeof p.lastPosition === "undefined") {
       p.lastPosition = { x: p.x, y: p.y };
     }
-    // p.markedForRemoval = p.markedForRemoval || false; // This line is removed as part of new merging logic
-    // let isAttractedToPrimary = false; // This flag is removed
 
-    // The entire block for "NEW MERGE ATTRACTION AND ABSORPTION LOGIC" including
-    // if (p.isPiece && Date.now() - p.spawnTime > MERGE_TIME) { ... }
-    // and the subsequent "if (p.markedForRemoval)" and "else if (isAttractedToPrimary)"
-    // is being REMOVED as per the new requirements.
-    // Player pieces will no longer be actively attracted to their primary from afar.
-    // Absorption will be handled in the player-player collision loop.
-
-    // The "else" that previously wrapped the original AI logic is now the default path.
-    // --- START OF ORIGINAL AI LOGIC (now default execution path) ---
     if (p.isPiece) {
-      // This is the old piece logic (clustering / food for pieces not merging to primary)
       const parentExists = players.some(
         (parent) => parent.username === p.originalUsername && !parent.isPiece
       );
       let isAttractedToCluster = false;
 
-      // Only cluster if the original player is gone AND the piece is not yet eligible/attracted to a primary
       if (!parentExists) {
         const siblingPieces = players.filter(
           (s) =>
@@ -665,7 +650,7 @@ function animate() {
           let totalSiblingEffectiveMass = 0;
 
           for (const sibling of siblingPieces) {
-            const mass = sibling.r * sibling.r; // Use area as mass proxy
+            const mass = sibling.r * sibling.r;
             centroidX += sibling.x * mass;
             centroidY += sibling.y * mass;
             totalSiblingEffectiveMass += mass;
@@ -701,7 +686,6 @@ function animate() {
         }
       }
 
-      // Food seeking for pieces (if not merging to primary and potentially clustering)
       const PIECE_FOOD_SEEK_RADIUS = p.r * 1;
       const PIECE_FOOD_ATTRACTION_STRENGTH = 0.01;
       let closestFood = null;
@@ -728,14 +712,12 @@ function animate() {
       }
     }
 
-    // Player state variables for movement decisions each tick
     let fleeing = false;
-    let target = null; // Target object {dx, dy, dist} if player p is pursuing something
-    let avoidingSpikes = false; // True if spike avoidance maneuver is active for player p
-    const forcedTargetUsername = eatTargets[p.username]; // Username of the forced target, if any
-    let isPursuingForcedTarget = false; // True if player p is acting on a forced target this tick
+    let target = null;
+    let avoidingSpikes = false;
+    const forcedTargetUsername = eatTargets[p.username];
+    let isPursuingForcedTarget = false;
 
-    // 1. Handle Forced Targets (Highest Priority)
     if (forcedTargetUsername) {
       const victim = players.find((x) => x.username === forcedTargetUsername);
       if (victim && victim !== p) {
@@ -746,27 +728,23 @@ function animate() {
         if (dist > 0) {
           target = { dx: targetDx, dy: targetDy, dist: dist };
           isPursuingForcedTarget = true;
-          fleeing = false; // Forced target overrides fleeing
+          fleeing = false;
         } else {
-          delete eatTargets[p.username]; // Target is too close or invalid, clear command
+          delete eatTargets[p.username];
         }
       } else {
-        delete eatTargets[p.username]; // Victim not found, clear command
+        delete eatTargets[p.username];
       }
     }
 
-    // 2. If not pursuing a forced target, consider AI behaviors (Spike Avoidance, General AI)
     if (!isPursuingForcedTarget) {
-      // 2a. Spike Tree Avoidance (scaled for non-piece players)
       if (!p.isPiece && Math.random() < 0.75) {
-        // Removed p.r < 50 condition
         let totalRepulsionDx = 0;
         let totalRepulsionDy = 0;
         let spikeNearby = false;
 
         for (const tree of spikedTrees) {
           const distToTree = Math.hypot(p.x - tree.x, p.y - tree.y);
-          // Scaled dangerRadius: awareness decreases for larger players
           const dangerRadius = tree.r + p.r + Math.max(50 - p.r / 2, 10.0);
 
           if (distToTree < dangerRadius && distToTree > 0) {
@@ -786,7 +764,6 @@ function animate() {
           if (magnitude > 0) {
             const finalRepulsionDx = totalRepulsionDx / magnitude;
             const finalRepulsionDy = totalRepulsionDy / magnitude;
-            // Scaled avoidanceStrength: larger players are less affected
             const avoidanceStrength = Math.max(0.15 - p.r / 1000, 0.02);
 
             p.dx += finalRepulsionDx * avoidanceStrength;
@@ -798,7 +775,6 @@ function animate() {
         }
       }
 
-      // 2b. General AI (Fleeing, Attacking other players, Food Seeking)
       if (!avoidingSpikes) {
         let potentialAttackTarget = null;
         let localTargetDist = Infinity;
@@ -988,7 +964,6 @@ function animate() {
       }
     }
 
-    // 3. Movement Application
     if (target && !fleeing && target.dist > 1) {
       const normX = target.dx / target.dist;
       const normY = target.dy / target.dist;
@@ -1012,9 +987,48 @@ function animate() {
       }
     }
 
-    const speed = 1 * (30 / p.r);
-    p.dx = Math.max(-speed, Math.min(speed, p.dx));
-    p.dy = Math.max(-speed, Math.min(speed, p.dy));
+    const baseSpeed = 1 * (30 / p.r);
+    let actualSpeed = baseSpeed;
+    const rampTime = 1000;
+
+    if (p.boostActivationTime > 0) {
+      const currentTime = Date.now();
+      if (currentTime < p.speedBoostEndTime) {
+        const elapsedSinceActivation = currentTime - p.boostActivationTime;
+        if (elapsedSinceActivation < rampTime) {
+          p.currentSpeedMultiplier =
+            1.0 +
+            (p.targetSpeedMultiplier - 1.0) *
+              (elapsedSinceActivation / rampTime);
+        } else {
+          p.currentSpeedMultiplier = p.targetSpeedMultiplier;
+        }
+      } else {
+        const timeSinceBoostShouldHaveEnded = currentTime - p.speedBoostEndTime;
+        if (
+          timeSinceBoostShouldHaveEnded < rampTime &&
+          p.currentSpeedMultiplier > 1.0
+        ) {
+          p.currentSpeedMultiplier =
+            p.targetSpeedMultiplier -
+            (p.targetSpeedMultiplier - 1.0) *
+              (timeSinceBoostShouldHaveEnded / rampTime);
+          p.currentSpeedMultiplier = Math.max(1.0, p.currentSpeedMultiplier);
+        } else {
+          p.currentSpeedMultiplier = 1.0;
+          p.boostActivationTime = 0;
+          p.speedBoostEndTime = 0;
+        }
+      }
+    } else {
+      p.currentSpeedMultiplier = 1.0;
+      p.boostActivationTime = 0;
+      p.speedBoostEndTime = 0;
+    }
+
+    actualSpeed = baseSpeed * p.currentSpeedMultiplier;
+    p.dx = Math.max(-actualSpeed, Math.min(actualSpeed, p.dx));
+    p.dy = Math.max(-actualSpeed, Math.min(actualSpeed, p.dy));
 
     p.x += p.dx;
     p.y += p.dy;
@@ -1022,7 +1036,6 @@ function animate() {
     p.x = (p.x + canvas.width) % canvas.width;
     p.y = (p.y + canvas.height) % canvas.height;
 
-    // Stuck player detection and nudge (this was inside the 'else' block, so it's fine)
     if (
       Math.hypot(p.x - p.lastPosition.x, p.y - p.lastPosition.y) < 0.1 &&
       Math.hypot(p.dx, p.dy) < 0.1
@@ -1041,26 +1054,21 @@ function animate() {
         p.dy += (Math.random() - 0.5) * nudgeStrength;
         p.stagnationCounter = 0;
       } else if (p.isPiece && p.stagnationCounter > 60) {
-        // For pieces not merging to primary and potentially stuck in a cluster
         const nudgeStrength = 0.02;
         p.dx += (Math.random() - 0.5) * nudgeStrength;
         p.dy += (Math.random() - 0.5) * nudgeStrength;
         p.stagnationCounter = 0;
       }
     }
-  } // --- END OF ORIGINAL AI LOGIC ---
-
-  // The player filtering loop based on p.markedForRemoval is REMOVED.
-  // Piece absorption and removal will now occur within the player-player collision loop.
+  }
 
   for (const p of players) {
-    // This loop is for food eating
     for (let i = food.length - 1; i >= 0; i--) {
       const f = food[i];
       const dx = f.x - p.x;
       const dy = f.y - p.y;
       if (Math.hypot(dx, dy) < p.r) {
-        const growth = (f.r * 2) / p.r; // Changed growth calculation
+        const growth = (f.r * 2) / p.r;
         p.targetR += growth;
         food.splice(i, 1);
       }
@@ -1085,7 +1093,6 @@ function animate() {
       const dy = p2.y - p1.y;
       const dist = Math.hypot(dx, dy);
 
-      // Standard player eating player
       if (
         dist < p1.r &&
         p1.r > p2.r * 1.1 &&
@@ -1101,6 +1108,17 @@ function animate() {
         const newArea = area1 + area2;
         p1.targetR = Math.sqrt(newArea / Math.PI);
 
+        if (
+          eatTargets[p1.username] === p2.username &&
+          p1.boostActivationTime > 0
+        ) {
+          p1.speedBoostEndTime = Date.now();
+        }
+        if (p2.boostActivationTime > 0) {
+          p2.speedBoostEndTime = Date.now();
+          p2.currentSpeedMultiplier = 1.0;
+        }
+
         for (let j = 0; j < 20; j++) {
           particles.push({
             x: p2.x,
@@ -1113,7 +1131,7 @@ function animate() {
           });
         }
 
-        delete eatTargets[p2.username]; // This might need more context if eatTargets is used for pieces vs full players
+        delete eatTargets[p2.username];
         if (eatTargets[p1.username] === p2.username)
           delete eatTargets[p1.username];
 
@@ -1122,23 +1140,19 @@ function animate() {
           i--;
         }
         break;
-      }
-      // New: Primary player absorbing its own eligible piece on contact
-      else if (
-        !p1.isPiece && // p1 is a primary player (not a piece)
-        p2.isPiece && // p2 is a piece
-        p2.originalUsername === p1.username && // p2 belongs to p1's original user
-        Date.now() - p2.spawnTime > MERGE_TIME && // p2 is past MERGE_TIME
-        dist < p1.r // p2 is within p1's radius (contact-based absorption)
+      } else if (
+        !p1.isPiece &&
+        p2.isPiece &&
+        p2.originalUsername === p1.username &&
+        Date.now() - p2.spawnTime > MERGE_TIME &&
+        dist < p1.r
       ) {
         const area1 = Math.PI * p1.r * p1.r;
         const area2 = Math.PI * p2.r * p2.r;
         const newArea = area1 + area2;
         p1.targetR = Math.sqrt(newArea / Math.PI);
 
-        // Spawn particles for merge absorption effect
         for (let k = 0; k < 15; k++) {
-          // Using k for loop variable
           particles.push({
             x: p2.x,
             y: p2.y,
@@ -1146,17 +1160,14 @@ function animate() {
             dy: (Math.random() - 0.5) * 3,
             alpha: 1,
             size: 4 + Math.random() * 3,
-            color: "lightblue", // Distinct color for merge
+            color: "lightblue",
           });
         }
 
-        // Remove the absorbed piece p2
         players.splice(j, 1);
         if (i > j) {
-          i--; // Adjust outer loop index
+          i--;
         }
-        // Do not break here, p1 might absorb another piece in the same frame.
-        // The inner loop index j will be correct due to reverse iteration.
       }
     }
   }
@@ -1164,17 +1175,11 @@ function animate() {
   players.sort((a, b) => a.r - b.r);
   for (const p of players) drawPlayer(p);
 
-  // Add after the above loop:
-  // for (const piece of explodedPlayerPieces) { // REMOVED - pieces drawn by main players loop
-  //   drawPlayer(piece);
-  // }
-
   drawParticles();
   spawnFood();
 
   const scoreboardEntries = [];
 
-  // Add active players from the 'players' array
   for (const player of players) {
     scoreboardEntries.push({
       display_name: player.display_name,
@@ -1183,7 +1188,6 @@ function animate() {
     });
   }
 
-  // Find unique original players from pieces in the 'players' array
   const pieceUsernames = new Set();
   players.forEach((p) => {
     if (p.isPiece) {
@@ -1191,9 +1195,7 @@ function animate() {
     }
   });
 
-  // For each original player who has pieces, find their largest piece for scoreboard
   for (const username of pieceUsernames) {
-    // Only add to scoreboard if the original, non-piece player is NOT currently active
     if (!players.some((p) => p.username === username && !p.isPiece)) {
       let largestPieceRadius = 0;
       let displayName = "";
@@ -1206,13 +1208,10 @@ function animate() {
         }
       });
       if (largestPieceRadius > 0) {
-        // Check if this entry already exists (e.g. from the main players loop if a piece became a player)
-        // to avoid duplicates if a merged player is also somehow still having pieces listed.
-        // This is a safeguard, ideally merge logic handles it.
         if (!scoreboardEntries.some((e) => e.username === username)) {
           scoreboardEntries.push({
             display_name: displayName || username,
-            username: username, // original username
+            username: username,
             score: largestPieceRadius,
           });
         }
@@ -1220,24 +1219,19 @@ function animate() {
     }
   }
 
-  // Sort all entries by score
   const sortedScoreboardEntries = scoreboardEntries.sort(
     (a, b) => b.score - a.score
   );
-  // Determine how many entries to actually show (top 20 max)
   const entriesToDisplayCount = Math.min(sortedScoreboardEntries.length, 20);
 
-  // Draw scoreboard background with dynamic height
   ctx.fillStyle = "rgba(0,0,0,0.6)";
   ctx.fillRect(20, 20, 220, 36 + entriesToDisplayCount * 26);
 
-  // Draw scoreboard title
   ctx.fillStyle = "white";
   ctx.font = "18px sans-serif";
   ctx.textAlign = "left";
   ctx.fillText("🏆 Resnīši:", 30, 45);
 
-  // Draw the top scoreboard entries
   sortedScoreboardEntries
     .slice(0, entriesToDisplayCount)
     .forEach((entry, i) => {
@@ -1268,7 +1262,6 @@ function animate() {
   requestAnimationFrame(animate);
 }
 
-// Initial setup:
-resizeCanvas(); // Set initial canvas size
-spawnSpikedTrees(); // Spawn trees based on initial size
-animate(); // Start the game loop
+resizeCanvas();
+spawnSpikedTrees();
+animate();
