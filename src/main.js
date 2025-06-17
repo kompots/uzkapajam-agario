@@ -63,11 +63,11 @@ client.on("message", (channel, tags, message, self) => {
       player.speedBoostEndTime = Date.now();
     }
   } else if (message === "!play") {
-    play(tags);
+    if (players.length < 101) {
+      play(tags);
+    }
   }
-  if (players.length < 101) {
-    play(tags);
-  }
+
   // if (Math.floor(Math.random() * 10) + 1 > 7) {
   //   if (players.length > 2) {
   //     let target = players[Math.floor(Math.random() * players.length)].username;
