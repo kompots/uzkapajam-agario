@@ -31,12 +31,15 @@ async function getUserProfilePicture(username) {
   return res.data.data[0]?.profile_image_url || null;
 }
 
+const params = new URLSearchParams(window.location.search);
+const channel = params.get("channel") || "uzkapajam";
+
 const client = new tmi.Client({
   connection: {
     secure: true,
     reconnect: true,
   },
-  channels: ["uzkapajam"],
+  channels: [channel],
 });
 
 client.connect();
@@ -49,6 +52,9 @@ client.on("message", (channel, tags, message, self) => {
   } else if (message === "!stop") {
     delete eatTargets[tags.username];
   } else if (message === "!play") {
+    play(tags);
+  }
+  if (players.length < 101) {
     play(tags);
   }
 });
@@ -297,12 +303,12 @@ async function play(data) {
 }
 
 function spawnFood() {
-  const foodRadius = 4;
-  const foodSpawnMargin = 40; // Margin from canvas edges
+  const foodSpawnMargin = 4; // Margin from canvas edges
   // const spikedTreeAvoidanceRadius = SPIKED_TREE_RADIUS + foodRadius + 10; // tree.r + food.r + buffer. Not directly used, but documents the value
   let attemptsToSpawn = 0; // To prevent infinite loops if space is very limited. Max 200 attempts for all food.
 
   while (food.length < 120 && attemptsToSpawn < 200) {
+    let foodRadius = Math.floor(Math.random() * 9) + 2;
     attemptsToSpawn++;
     let x,
       y,
@@ -402,7 +408,7 @@ function drawPlayer(p) {
       ctx.restore();
 
       ctx.fillStyle = "white";
-      ctx.font = `${p.r / 3} sans-serif`;
+      ctx.font = `${p.r / 3}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.lineWidth = 4;
@@ -538,7 +544,7 @@ function animate() {
   // For now, we remove the specific explodedPlayerPieces loop.
   // Attraction and merging logic will be addressed in subsequent steps based on the new structure.
 
-  const MERGE_TIME = 60000; // 1 minute
+  const MERGE_TIME = 15000; // 1 minute
   const usernamesToProcessForMerging = new Set();
 
   // Iterate over all players to find pieces eligible for merging
@@ -670,8 +676,8 @@ function animate() {
             const dyToCentroid = centroidY - p.y;
             const distanceToCentroid = Math.hypot(dxToCentroid, dyToCentroid);
 
-            const CLUSTER_ATTRACTION_STRENGTH = 0.04; // Significantly increased
-            const MIN_DISTANCE_TO_APPLY_FORCE = p.r * 0.5; // Dead zone: don't apply if closer than half its radius
+            const CLUSTER_ATTRACTION_STRENGTH = 0.08; // Significantly increased
+            const MIN_DISTANCE_TO_APPLY_FORCE = p.r * 1.05; // Dead zone: don't apply if closer than half its radius
 
             if (distanceToCentroid > MIN_DISTANCE_TO_APPLY_FORCE) {
               // Normalized direction vector to centroid
@@ -682,7 +688,7 @@ function animate() {
               // The force can be stronger if further away, capped at some max influence per tick.
               const effectiveStrength =
                 CLUSTER_ATTRACTION_STRENGTH *
-                Math.min(distanceToCentroid / 150.0, 1.0); // Scale strength by distance up to a point
+                Math.min(distanceToCentroid / 1000.0, 1.0); // Scale strength by distance up to a point
 
               p.dx += normDx * effectiveStrength;
               p.dy += normDy * effectiveStrength;
@@ -702,7 +708,7 @@ function animate() {
       // or if they are pieces of an existing parent.
       // This should be a weaker force than cluster cohesion if active.
 
-      const PIECE_FOOD_SEEK_RADIUS = p.r * 4; // How far a piece will look for food
+      const PIECE_FOOD_SEEK_RADIUS = p.r * 1; // How far a piece will look for food
       const PIECE_FOOD_ATTRACTION_STRENGTH = 0.01; // Weaker than cluster cohesion
       let closestFood = null;
       let minDistToFood = PIECE_FOOD_SEEK_RADIUS;
@@ -862,9 +868,9 @@ function animate() {
           }
         }
 
-        if (!fleeing && p.r >= 100 && !p.isPiece) {
+        if (!fleeing && !p.isPiece) {
           const MIN_CLUSTER_SIZE = 2;
-          const CLUSTER_RADIUS_CHECK = p.r * 2.5;
+          const CLUSTER_RADIUS_CHECK = p.r * 5.5;
           const MAX_DIST_TO_CLUSTER_CENTER = p.r * 5;
           const SMALL_PLAYER_MAX_RADIUS = p.r * 0.6;
           let bestClusterCentroid = null;
@@ -996,14 +1002,14 @@ function animate() {
       const normY = target.dy / target.dist;
 
       if (isPursuingForcedTarget) {
-        const forcedAccel = 0.025;
+        const forcedAccel = 1;
         p.dx += normX * forcedAccel;
         p.dy += normY * forcedAccel;
         p.dx *= 0.95;
         p.dy *= 0.95;
       } else {
         if (target.dist < 60) {
-          const correction = 0.05;
+          const correction = 1;
           const align = 0.7;
           p.dx = p.dx * align + normX * correction;
           p.dy = p.dy * align + normY * correction;
@@ -1071,6 +1077,7 @@ function animate() {
       if (Math.hypot(dx, dy) < p.r) {
         const growth = 10 / p.r;
         p.targetR += growth;
+        console.log("Augonis: ", growth, " masa: ", p.targetR);
         food.splice(i, 1);
       }
     }
