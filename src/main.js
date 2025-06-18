@@ -36,7 +36,7 @@ const colors = [
   "lime",
   "cyan",
 ];
-const NUM_SPIKED_TREES = 0;
+const NUM_SPIKED_TREES = 20;
 const SPIKED_TREE_RADIUS = 15;
 const SPIKED_TREE_RESPAWN_DELAY = 30000;
 let lastTreeRespawnTime = 0;
@@ -51,7 +51,6 @@ canvas.height = 1;
 client.connect();
 
 client.on("message", (channel, tags, message, self) => {
-  console.log(message.toLowerCase());
   if (message.includes("!eat")) {
     const player = players.find((p) => p.username === tags.username);
     if (player && player.isStopping) {
@@ -131,31 +130,30 @@ client.on("message", (channel, tags, message, self) => {
         player.hasOrbiterSpawned = false;
 
         // Set player cooldown for getting a new orbiter
-        player.nextOrbiterAvailableTime =
-          Date.now() + (Math.floor(Math.random() * 60_000) + 240_000);
+        player.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown
       }
-    }
-  } else if (message.toLowerCase() === "!zerg") {
-    const player = players.find(
-      (p) => p.username === tags.username && !p.isPiece
-    ); // Ensure it's the main player
+    } else if (message.toLowerCase() === "!swarm") {
+      const player = players.find(
+        (p) => p.username === tags.username && !p.isPiece
+      ); // Ensure it's the main player
 
-    if (player) {
-      // Check if player exists and is a main player
-      if (isPlayerExploded(player.master)) {
-        console.log(
-          `Command !swarm from ${player.username} ignored, player is exploded.`
-        );
-        return;
-      }
-      if (!player.hasUsedSwarm) {
-        player.hasUsedSwarm = true;
-        spawnZergSwarm(player); // Call the spawning function
-      } else {
-        // Optional: send a message back to user? For now, just log.
-        console.log(
-          `Player ${player.username} tried to use !swarm again, but it's a one-time use command.`
-        );
+      if (player) {
+        // Check if player exists and is a main player
+        if (isPlayerExploded(player.master)) {
+          console.log(
+            `Command !swarm from ${player.username} ignored, player is exploded.`
+          );
+          return;
+        }
+        if (!player.hasUsedSwarm) {
+          player.hasUsedSwarm = true;
+          spawnZergSwarm(player); // Call the spawning function
+        } else {
+          // Optional: send a message back to user? For now, just log.
+          console.log(
+            `Player ${player.username} tried to use !swarm again, but it's a one-time use command.`
+          );
+        }
       }
     } else {
       // Optional: user not found or is a piece.
@@ -174,18 +172,53 @@ client.on("message", (channel, tags, message, self) => {
   // }
 });
 
-// play({
-//   username: "imkompots2",
-//   subscriber: true,
-// });
+console.log("Spawn mocked players");
+let mockPlayers = ["a", "b", "c", "d", "e", "f", "g", "h"];
+const mockCommands = ["!eat", "!stop", "!bop", "!swarm", "!play"];
 
-// play({
-//   username: "sniegbaltiite",
-//   subscriber: true,
-// });
+mockPlayers.forEach((element, index, array) => {
+  play({
+    username: element,
+    subscriber: true,
+  });
+});
 
-// eatTargets["imkompots2"] = "sniegbaltiite";
-// eatTargets["sniegbaltiite"] = "imkompots2";
+function triggerMockCommand() {
+  if (players.length === 0) return;
+
+  const randomPlayer = players[Math.floor(Math.random() * players.length)];
+  const randomCommand =
+    mockCommands[Math.floor(Math.random() * mockCommands.length)];
+
+  let simulatedMessage = randomCommand;
+
+  // Optionally include a target for !eat
+  if (randomCommand === "!eat") {
+    const targetPlayer = players.find(
+      (p) => p.username !== randomPlayer.username
+    );
+    if (targetPlayer) {
+      simulatedMessage += ` ${targetPlayer.username}`;
+    }
+  }
+
+  // Simulate the TMI 'message' event
+  console.log("Mocked cmd: ", simulatedMessage);
+  client.emit(
+    "message",
+    "#mockchannel",
+    {
+      username: randomPlayer.username,
+      "display-name": randomPlayer.username,
+      badges: {}, // Mock badges
+    },
+    simulatedMessage,
+    false
+  );
+}
+
+// Trigger every second
+setInterval(triggerMockCommand, 1000);
 
 async function getAppToken() {
   const res = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -448,7 +481,7 @@ async function play(data) {
       }
 
       const finalIsPrivileged = !!(isPrivilegedByBadge || isPrivilegedByFollow);
-      const radius = 25;
+      const radius = 100;
       let x,
         y,
         safe = false;
@@ -817,8 +850,8 @@ function drawPlayer(p) {
 }
 
 function spawnZergSwarm(masterPlayer) {
-  const SWARM_COUNT = 10;
-  const SWARM_RADIUS = 10;
+  const SWARM_COUNT = 20;
+  const SWARM_RADIUS = 5;
   // const SPAWN_CIRCLE_RADIUS = masterPlayer.r + 30; // This line can be removed
   const zergBaseUsername = `${masterPlayer.username}_Zerg_${Date.now()}`;
 
@@ -887,8 +920,7 @@ function spawnZergSwarm(masterPlayer) {
 
       orbitingSpikeTree: null,
       hasOrbiterSpawned: false, // Zergs don't get orbiters
-      nextOrbiterAvailableTime:
-        Date.now() + (Math.floor(Math.random() * 60_000) + 240_000),
+      nextOrbiterAvailableTime: Date.now() + 100 * 365 * 24 * 60 * 60 * 1000, // Effectively infinite cooldown
 
       hasUsedSwarm: true, // Zergs cannot use !swarm
 
@@ -1231,8 +1263,7 @@ function animate() {
 
         p.orbitingSpikeTree = null;
         p.hasOrbiterSpawned = false; // Allow conditions for new spawn to be checked later
-        p.nextOrbiterAvailableTime =
-          Date.now() + (Math.floor(Math.random() * 60_000) + 240_000);
+        p.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown
       } // --- END NEW TIMED DROP LOGIC ---
 
       // Existing orbiter angle/position update logic follows here
@@ -2255,6 +2286,41 @@ function animate() {
     }, 10000);
     return;
   }
+
+  // if (debugPlayerListCounter > 0) {
+  //   console.log(
+  //     `--- Player List Snapshot (Frames remaining to log: ${debugPlayerListCounter}) ---`
+  //   );
+  //   if (players.length === 0) {
+  //     console.log("Player list is empty.");
+  //   } else {
+  //     players.forEach((p_diag, index) => {
+  //       let diagInfo = `#${index} - User: "${p_diag.username}", Piece: ${
+  //         p_diag.isPiece
+  //       }, R: ${p_diag.r.toFixed(2)}, mass: ${Math.round(p_diag.r * p_diag.r)}`;
+  //       if (p_diag.isPiece) {
+  //         diagInfo += `, OrigUser: "${p_diag.originalUsername || "N/A"}"`;
+  //         if (typeof p_diag.parentPreExplosionRadius !== "undefined") {
+  //           diagInfo += `, parentR: ${p_diag.parentPreExplosionRadius.toFixed(
+  //             2
+  //           )}`;
+  //         }
+  //         if (typeof p_diag.canMergeTime !== "undefined") {
+  //           const mergeTimeDelta = (p_diag.canMergeTime - Date.now()) / 1000;
+  //           diagInfo += `, mergeIn: ${mergeTimeDelta.toFixed(1)}s`;
+  //         } else {
+  //           diagInfo += `, canMergeTime: N/A`;
+  //         }
+  //       }
+  //       console.log(diagInfo);
+  //     });
+  //   }
+  //   console.log(`--- End Snapshot (Total players: ${players.length}) ---`);
+  //   debugPlayerListCounter--;
+  //   if (debugPlayerListCounter === 0) {
+  //     console.log("Player list logging deactivated.");
+  //   }
+  // }
   requestAnimationFrame(animate);
 }
 
