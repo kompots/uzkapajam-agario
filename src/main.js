@@ -37,7 +37,7 @@ const colors = [
   "cyan",
 ];
 const NUM_SPIKED_TREES = 0;
-const BUMP_COOLDOWN = 3000; // 10 seconds in milliseconds
+const BUMP_COOLDOWN = 15000; // 10 seconds in milliseconds
 const BUMP_CHARGE_SPEED = 55;
 const BUMP_CHARGE_DURATION = 10000; // 2 seconds in milliseconds
 const BUMP_IMPULSE = 10000; // Tunable: force applied to the target player
