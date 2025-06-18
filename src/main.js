@@ -36,7 +36,7 @@ const colors = [
   "lime",
   "cyan",
 ];
-const NUM_SPIKED_TREES = 20;
+const NUM_SPIKED_TREES = 0;
 const SPIKED_TREE_RADIUS = 15;
 const SPIKED_TREE_RESPAWN_DELAY = 30000;
 let lastTreeRespawnTime = 0;
@@ -57,17 +57,15 @@ client.on("message", (channel, tags, message, self) => {
       return;
     } // Do nothing if player is stopping
     if (player && isPlayerExploded(player.master)) {
-      console.log(
-        `Command !eat from ${player.username} ignored, player is exploded.`
-      );
       return;
     }
 
     let parts = message.split(" ");
-    eatTargets[tags.username] = parts[1];
-    console.log(eatTargets);
+    let target = players.find((p) => p.username === parts[1]);
+    if (target) {
+      eatTargets[tags.username] = parts[1];
+    }
     if (player) {
-      // Player is already confirmed to exist if we reach here and are not stopping.
       player.speedBoostEndTime = Date.now() + 5000;
       player.boostActivationTime = Date.now();
     }
@@ -75,9 +73,6 @@ client.on("message", (channel, tags, message, self) => {
     const player = players.find((p) => p.username === tags.username);
     if (player) {
       if (isPlayerExploded(player.master)) {
-        console.log(
-          `Command !stop from ${player.username} ignored, player is exploded.`
-        );
         return;
       }
       player.isStopping = true;
@@ -88,6 +83,22 @@ client.on("message", (channel, tags, message, self) => {
         currentSpeedMultiplier: player.currentSpeedMultiplier,
       };
       player.canMoveAfterStopTime = 0;
+      if (player.orbitingSpikeTree) {
+        const droppedTree = {
+          x: player.orbitingSpikeTree.x, // Current world position of the orbiter
+          y: player.orbitingSpikeTree.y,
+          r: player.orbitingSpikeTree.r, // Radius of the orbiter (SPIKED_TREE_RADIUS)
+          dx: (Math.random() - 0.5) / 3, // Standard dx for new environmental trees
+          dy: (Math.random() - 0.5) / 3, // Standard dy for new environmental trees
+          creationTime: Date.now(),
+          maxLifetime: 60000, // 60 seconds in ms
+          ownerMaster: player.master, // Added property
+        };
+        spikedTrees.push(droppedTree);
+        player.orbitingSpikeTree = null;
+        player.hasOrbiterSpawned = false;
+        player.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown
+      }
     }
     delete eatTargets[tags.username];
     // const player = players.find((p) => p.username === tags.username); // Player is already found
@@ -103,9 +114,6 @@ client.on("message", (channel, tags, message, self) => {
     if (player) {
       // Check player exists first
       if (isPlayerExploded(player.master)) {
-        console.log(
-          `Command !bop from ${player.username} ignored, player is exploded.`
-        );
         return;
       }
       if (player.orbitingSpikeTree) {
@@ -132,56 +140,64 @@ client.on("message", (channel, tags, message, self) => {
         // Set player cooldown for getting a new orbiter
         player.nextOrbiterAvailableTime = Date.now() + 5 * 60 * 1000; // 5-minute cooldown
       }
-    } else if (message.toLowerCase() === "!swarm") {
-      const player = players.find(
-        (p) => p.username === tags.username && !p.isPiece
-      ); // Ensure it's the main player
+    }
+  } else if (message.toLowerCase() === "!zerg") {
+    const player = players.find(
+      (p) => p.username === tags.username && !p.isPiece
+    ); // Ensure it's the main player
 
-      if (player) {
-        // Check if player exists and is a main player
-        if (isPlayerExploded(player.master)) {
-          console.log(
-            `Command !swarm from ${player.username} ignored, player is exploded.`
-          );
-          return;
-        }
-        if (!player.hasUsedSwarm) {
-          player.hasUsedSwarm = true;
-          spawnZergSwarm(player); // Call the spawning function
-        } else {
-          // Optional: send a message back to user? For now, just log.
-          console.log(
-            `Player ${player.username} tried to use !swarm again, but it's a one-time use command.`
-          );
-        }
+    if (player) {
+      // Check if player exists and is a main player
+      if (isPlayerExploded(player.master)) {
+        return;
       }
-    } else {
-      // Optional: user not found or is a piece.
-      console.log(
-        `Command !swarm ignored for user ${tags.username} (not an active main player).`
-      );
+      if (!player.hasUsedSwarm) {
+        player.hasUsedSwarm = true;
+        spawnZergSwarm(player); // Call the spawning function
+      }
     }
   }
-  // play(tags);
-  // if (Math.floor(Math.random() * 10) + 1 > 7) {
-  //   if (players.length > 2) {
-  //     let target = players[Math.floor(Math.random() * players.length)].username;
-  //     eatTargets[tags.username] = target;
-  //     console.log("Triggered attack on : ", target);
-  //   }
-  // }
 });
 
-console.log("Spawn mocked players");
-let mockPlayers = ["a", "b", "c", "d", "e", "f", "g", "h"];
-const mockCommands = ["!eat", "!stop", "!bop", "!swarm", "!play"];
+const adjectives = [
+  "Fast",
+  "Silly",
+  "Angry",
+  "Happy",
+  "Crazy",
+  "Lazy",
+  "Sneaky",
+];
+const animals = [
+  "Tiger",
+  "Panda",
+  "Sloth",
+  "Eagle",
+  "Shark",
+  "Llama",
+  "Penguin",
+];
 
-mockPlayers.forEach((element, index, array) => {
-  play({
-    username: element,
-    subscriber: true,
-  });
-});
+const randomNickname = () => {
+  const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const animal = animals[Math.floor(Math.random() * animals.length)];
+  const num = Math.floor(Math.random() * 1000);
+  return `${adj}${animal}${num}`;
+};
+
+let mockPlayers = [];
+for (let i = 0; i < 50; i++) {
+  mockPlayers.push(randomNickname());
+}
+
+const mockCommands = ["!eat", "!stop", "!bop", "!zerg"];
+
+// mockPlayers.forEach((element, index, array) => {
+//   play({
+//     username: element,
+//     subscriber: true,
+//   });
+// });
 
 function triggerMockCommand() {
   if (players.length === 0) return;
@@ -203,7 +219,6 @@ function triggerMockCommand() {
   }
 
   // Simulate the TMI 'message' event
-  console.log("Mocked cmd: ", simulatedMessage);
   client.emit(
     "message",
     "#mockchannel",
@@ -217,8 +232,7 @@ function triggerMockCommand() {
   );
 }
 
-// Trigger every second
-setInterval(triggerMockCommand, 1000);
+// setInterval(triggerMockCommand, 1000);
 
 async function getAppToken() {
   const res = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -248,7 +262,7 @@ async function getUserData(username, userId) {
 
   if (!channelId) {
     console.error("Could not fetch channel ID for:", channel);
-    return { profile_image_url: null, followed_at: null };
+    return { profile_image_url: null };
   }
 
   // Get user profile picture (existing logic)
@@ -264,40 +278,7 @@ async function getUserData(username, userId) {
   const profile_image_url =
     userProfileRes.data.data[0]?.profile_image_url || null;
 
-  // Get follower status
-  let followed_at = null;
-  if (userId) {
-    // userId is needed for the follows endpoint
-    try {
-      const followsRes = await axios.get(
-        "https://api.twitch.tv/helix/users/follows",
-        {
-          headers: {
-            "Client-ID": clientId,
-            Authorization: `Bearer ${token}`,
-          },
-          params: {
-            to_id: channelId,
-            from_id: userId,
-          },
-        }
-      );
-      if (followsRes.data.data && followsRes.data.data.length > 0) {
-        followed_at = followsRes.data.data[0].followed_at;
-      }
-    } catch (error) {
-      console.error(
-        "Error fetching follower status for user ID:",
-        userId,
-        error
-      );
-      // Potentially handle 404 for non-followers if API behaves that way, or just let it be null
-    }
-  } else {
-    console.warn("User ID not provided to getUserData for username:", username);
-  }
-
-  return { profile_image_url, followed_at };
+  return { profile_image_url };
 }
 
 window.addEventListener("resize", resizeCanvas);
@@ -463,75 +444,65 @@ function drawSpikedTree(tree) {
 }
 
 async function play(data) {
-  getUserData(data.username, data["user-id"]).then(
-    ({ profile_image_url, followed_at }) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = profile_image_url; // Use the fetched profile image url
-      let isPrivilegedByBadge = data.subscriber;
-      let isPrivilegedByFollow = false;
-      if (followed_at) {
-        const followDate = new Date(followed_at);
-        const now = new Date();
-        const diffTime = Math.abs(now - followDate);
-        const diffDays = diffTime / (1000 * 60 * 60 * 24);
-        if (diffDays > 1) {
-          isPrivilegedByFollow = true;
-        }
-      }
-
-      const finalIsPrivileged = !!(isPrivilegedByBadge || isPrivilegedByFollow);
-      const radius = 100;
-      let x,
-        y,
-        safe = false;
-      for (let attempts = 0; attempts < 100 && !safe; attempts++) {
-        x = Math.random() * (canvas.width - 2 * radius) + radius;
-        y = Math.random() * (canvas.height - 2 * radius) + radius;
-        safe = !players.some(
-          (p) => Math.hypot(p.x - x, p.y - y) < p.r + radius + 10
-        );
-      }
-
-      const player = {
-        username: data.username,
-        display_name: data.display_name || data.username,
-        x,
-        y,
-        dx: 0,
-        dy: 0,
-        r: radius,
-        targetR: radius,
-        avatar: img,
-        isPiece: false,
-        originalUsername: data.username,
-        master: data.username,
-        spawnTime: Date.now(),
-        stagnationCounter: 0,
-        lastPosition: { x, y },
-        speedBoostEndTime: 0,
-        currentSpeedMultiplier: 1.0,
-        targetSpeedMultiplier: 1.5,
-        boostActivationTime: 0,
-        isPrivileged: finalIsPrivileged, // Assign the combined status
-        isStopping: false,
-        stopStartTime: 0,
-        originalSpeedComponents: { dx: 0, dy: 0, currentSpeedMultiplier: 1.0 },
-        canMoveAfterStopTime: 0,
-        orbitingSpikeTree: null,
-        hasOrbiterSpawned: false,
-        nextOrbiterAvailableTime: 0,
-        hasUsedSwarm: false,
-      };
-
-      const existing = players.find(
-        (p) => p.username === data.username && !p.isPiece
+  getUserData(data.username, data["user-id"]).then(({ profile_image_url }) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = profile_image_url; // Use the fetched profile image url
+    let isPrivilegedByBadge =
+      data.subscriber || data.mod || data.turbo ? true : false;
+    let isPrivilegedByFollow = false;
+    const finalIsPrivileged = !!(isPrivilegedByBadge || isPrivilegedByFollow);
+    const radius = 20;
+    let x,
+      y,
+      safe = false;
+    for (let attempts = 0; attempts < 100 && !safe; attempts++) {
+      x = Math.random() * (canvas.width - 2 * radius) + radius;
+      y = Math.random() * (canvas.height - 2 * radius) + radius;
+      safe = !players.some(
+        (p) => Math.hypot(p.x - x, p.y - y) < p.r + radius + 10
       );
-      if (!existing) {
-        players.push(player);
-      }
     }
-  );
+
+    const player = {
+      username: data.username,
+      display_name: data.display_name || data.username,
+      x,
+      y,
+      dx: 0,
+      dy: 0,
+      r: radius,
+      targetR: radius,
+      avatar: img,
+      isPiece: false,
+      originalUsername: data.username,
+      master: data.username,
+      spawnTime: Date.now(),
+      stagnationCounter: 0,
+      lastPosition: { x, y },
+      speedBoostEndTime: 0,
+      currentSpeedMultiplier: 1.0,
+      targetSpeedMultiplier: 1.5,
+      boostActivationTime: 0,
+      isPrivileged: finalIsPrivileged, // Assign the combined status
+      isStopping: false,
+      stopStartTime: 0,
+      originalSpeedComponents: { dx: 0, dy: 0, currentSpeedMultiplier: 1.0 },
+      canMoveAfterStopTime: 0,
+      orbitingSpikeTree: null,
+      hasOrbiterSpawned: false,
+      nextOrbiterAvailableTime: 0,
+      hasUsedSwarm: false,
+      title: data.username,
+    };
+
+    const existing = players.find(
+      (p) => p.username === data.username && !p.isPiece
+    );
+    if (!existing) {
+      players.push(player);
+    }
+  });
 }
 
 function spawnFood() {
@@ -576,35 +547,6 @@ function spawnFood() {
 }
 
 function drawPlayer(p) {
-  // --- BEGIN SANITY CHECKS for drawPlayer ---
-  if (!p || typeof p.r === "undefined") {
-    // This checks if p is null/undefined or if p.r is missing, which is fundamental.
-    console.error(
-      "drawPlayer: Invalid or incomplete player object passed. Player data:",
-      p
-    );
-    return; // Skip drawing this object
-  }
-
-  if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.r) || p.r <= 0) {
-    // This checks for NaN, Infinity, or non-positive radius values.
-    // JSON.stringify might fail for Infinity/NaN, so log carefully.
-    console.error(
-      "drawPlayer: Attempted to draw player with non-finite or invalid properties.",
-      "x:",
-      p.x,
-      "y:",
-      p.y,
-      "r:",
-      p.r,
-      "username:",
-      p.username,
-      "isPiece:",
-      p.isPiece
-    );
-    return; // Skip drawing this object
-  }
-  // --- END SANITY CHECKS for drawPlayer ---
   p.r += (p.targetR - p.r) * 0.15;
 
   // Track player velocity
@@ -620,95 +562,95 @@ function drawPlayer(p) {
   const offsets = [-canvas.width, 0, canvas.width];
   const now = Date.now();
 
-  // Add smoke puff trail if attacker
-  if (!p.trail) p.trail = [];
-  if (eatTargets[p.username]) {
-    p.trail.push({
-      x: p.x + (Math.random() - 0.5) * 10,
-      y: p.y + (Math.random() - 0.5) * 10,
-      time: now,
-      jitter: Math.random() * 4,
-      sizeFactor: 0.5 + Math.random() * 0.5,
-      swirlStartAngle: Math.random() * Math.PI * 2,
-      swirlSpeed: 0.002 + Math.random() * 0.002,
-      velBias: { x: p.vx || 0, y: p.vy || 0 },
-    });
-    if (p.trail.length > 40) p.trail.shift();
-  }
+  // // Add smoke puff trail if attacker
+  // if (!p.trail) p.trail = [];
+  // if (eatTargets[p.username]) {
+  //   p.trail.push({
+  //     x: p.x + (Math.random() - 0.5) * 10,
+  //     y: p.y + (Math.random() - 0.5) * 10,
+  //     time: now,
+  //     jitter: Math.random() * 4,
+  //     sizeFactor: 0.5 + Math.random() * 0.5,
+  //     swirlStartAngle: Math.random() * Math.PI * 2,
+  //     swirlSpeed: 0.002 + Math.random() * 0.002,
+  //     velBias: { x: p.vx || 0, y: p.vy || 0 },
+  //   });
+  //   if (p.trail.length > 40) p.trail.shift();
+  // }
 
-  // Draw trail smoke puffs
-  if (eatTargets[p.username] && p.trail) {
-    for (const puff of p.trail) {
-      const age = now - puff.time;
-      const life = 700;
-      const alpha = Math.max(0, 1 - age / life);
-      const radius = p.r * puff.sizeFactor * (1 + age / life);
+  // // Draw trail smoke puffs
+  // if (eatTargets[p.username] && p.trail) {
+  //   for (const puff of p.trail) {
+  //     const age = now - puff.time;
+  //     const life = 700;
+  //     const alpha = Math.max(0, 1 - age / life);
+  //     const radius = p.r * puff.sizeFactor * (1 + age / life);
 
-      if (alpha <= 0) {
-        if (!puff.burstDone) {
-          const vb = puff.velBias;
-          for (let i = 0; i < 6; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const speed = 0.5 + Math.random() * 1;
-            const dirX = Math.cos(angle) * speed + vb.x * 0.3;
-            const dirY = Math.sin(angle) * speed + vb.y * 0.3;
+  //     if (alpha <= 0) {
+  //       if (!puff.burstDone) {
+  //         const vb = puff.velBias;
+  //         for (let i = 0; i < 6; i++) {
+  //           const angle = Math.random() * Math.PI * 2;
+  //           const speed = 0.5 + Math.random() * 1;
+  //           const dirX = Math.cos(angle) * speed + vb.x * 0.3;
+  //           const dirY = Math.sin(angle) * speed + vb.y * 0.3;
 
-            particles_other.push({
-              x: puff.x,
-              y: puff.y,
-              dx: dirX,
-              dy: dirY,
-              start: now,
-              life: 500,
-              radius: 2 + Math.random() * 2,
-            });
-          }
-          puff.burstDone = true;
-        }
-        continue;
-      }
+  //           particles_other.push({
+  //             x: puff.x,
+  //             y: puff.y,
+  //             dx: dirX,
+  //             dy: dirY,
+  //             start: now,
+  //             life: 500,
+  //             radius: 2 + Math.random() * 2,
+  //           });
+  //         }
+  //         puff.burstDone = true;
+  //       }
+  //       continue;
+  //     }
 
-      for (const dx_offset of offsets) {
-        for (const dy_offset of [-canvas.height, 0, canvas.height]) {
-          const puffX = puff.x + dx_offset;
-          const puffY = puff.y + dy_offset;
+  //     for (const dx_offset of offsets) {
+  //       for (const dy_offset of [-canvas.height, 0, canvas.height]) {
+  //         const puffX = puff.x + dx_offset;
+  //         const puffY = puff.y + dy_offset;
 
-          for (let i = 0; i < 3; i++) {
-            const offsetX = (Math.random() - 0.5) * 5;
-            const offsetY = (Math.random() - 0.5) * 5;
-            const r = radius * (0.7 + Math.random() * 0.3);
+  //         for (let i = 0; i < 3; i++) {
+  //           const offsetX = (Math.random() - 0.5) * 5;
+  //           const offsetY = (Math.random() - 0.5) * 5;
+  //           const r = radius * (0.7 + Math.random() * 0.3);
 
-            ctx.beginPath();
-            ctx.arc(puffX + offsetX, puffY + offsetY, r, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(180,180,180,${alpha * 0.05})`;
-            ctx.fill();
-          }
+  //           ctx.beginPath();
+  //           ctx.arc(puffX + offsetX, puffY + offsetY, r, 0, Math.PI * 2);
+  //           ctx.fillStyle = `rgba(180,180,180,${alpha * 0.05})`;
+  //           ctx.fill();
+  //         }
 
-          // Swirl line
-          const swirlAngle = puff.swirlStartAngle + age * puff.swirlSpeed;
-          const swirlRadius = radius * 0.6;
+  //         // Swirl line
+  //         const swirlAngle = puff.swirlStartAngle + age * puff.swirlSpeed;
+  //         const swirlRadius = radius * 0.6;
 
-          ctx.save();
-          ctx.translate(puffX, puffY);
-          ctx.rotate(swirlAngle);
+  //         ctx.save();
+  //         ctx.translate(puffX, puffY);
+  //         ctx.rotate(swirlAngle);
 
-          ctx.beginPath();
-          ctx.moveTo(0, 0);
-          for (let t = 0; t < 1; t += 0.05) {
-            const angle = t * Math.PI * 2 * 1.5;
-            const r = swirlRadius * t;
-            const x = Math.cos(angle) * r;
-            const y = Math.sin(angle) * r;
-            ctx.lineTo(x, y);
-          }
-          ctx.strokeStyle = `rgba(100, 100, 100, ${alpha * 0.4})`;
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          ctx.restore();
-        }
-      }
-    }
-  }
+  //         ctx.beginPath();
+  //         ctx.moveTo(0, 0);
+  //         for (let t = 0; t < 1; t += 0.05) {
+  //           const angle = t * Math.PI * 2 * 1.5;
+  //           const r = swirlRadius * t;
+  //           const x = Math.cos(angle) * r;
+  //           const y = Math.sin(angle) * r;
+  //           ctx.lineTo(x, y);
+  //         }
+  //         ctx.strokeStyle = `rgba(100, 100, 100, ${alpha * 0.4})`;
+  //         ctx.lineWidth = 1;
+  //         ctx.stroke();
+  //         ctx.restore();
+  //       }
+  //     }
+  //   }
+  // }
 
   // Draw the player and duplicates
   for (const dx_offset of offsets) {
@@ -747,7 +689,6 @@ function drawPlayer(p) {
           (Math.sin(Date.now() / (animationSpeed / (2 * Math.PI))) + 1) / 2;
         const baseAlpha = 0.3;
         const pulseAlpha = 0.4 * pulsationFactor;
-
         const attackerGradient = ctx.createRadialGradient(
           drawX,
           drawY,
@@ -798,7 +739,6 @@ function drawPlayer(p) {
           : "rgba(80,80,80,0.6)";
         ctx.fill();
       }
-
       const originalGradient = ctx.createRadialGradient(
         drawX,
         drawY,
@@ -821,8 +761,8 @@ function drawPlayer(p) {
       ctx.textBaseline = "middle";
       ctx.lineWidth = currentLineWidth + 2.5;
       ctx.strokeStyle = "black";
-      ctx.strokeText(p.display_name, drawX, drawY);
-      ctx.fillText(p.display_name, drawX, drawY);
+      ctx.strokeText(p.title, drawX, drawY);
+      ctx.fillText(p.title, drawX, drawY);
     }
   }
 
@@ -931,6 +871,7 @@ function spawnZergSwarm(masterPlayer) {
       targetSpeedMultiplier: 1.5, // Standard target for !eat
       boostActivationTime: 0,
       isPrivileged: false, // Zergs are not privileged
+      title: "Zerg",
     };
 
     eatTargets[zergUsername] = masterPlayer.username; // Attack their master
@@ -938,9 +879,6 @@ function spawnZergSwarm(masterPlayer) {
 
     players.push(newZerg);
   }
-  console.log(
-    `Spawned ${SWARM_COUNT} Zerg for master ${masterPlayer.username}`
-  );
 }
 
 function drawParticles() {
@@ -1019,11 +957,10 @@ function animate() {
       f.y = Math.max(f.r, Math.min(canvas.height - f.r, f.y));
     }
   }
-
   for (let i = players.length - 1; i >= 0; i--) {
     const player = players[i];
-    let collidedWithTree = false;
 
+    let collidedWithTree = false;
     for (let j = spikedTrees.length - 1; j >= 0; j--) {
       const tree = spikedTrees[j];
       const dx = player.x - tree.x;
@@ -1048,7 +985,6 @@ function animate() {
         const R_min_for_more_pieces = 50; // Min radius to start getting more than 3 pieces
         const R_max_for_all_pieces = 300; // Radius at which player is likely to get max pieces (or close to it)
         const playerRadius = player.r; // Parent player's radius
-
         let sizeFactor = 0;
         if (playerRadius > R_min_for_more_pieces) {
           sizeFactor = Math.min(
@@ -1058,31 +994,11 @@ function animate() {
           );
         }
 
-        // Base number of pieces: 3 (for smallest/factor=0) up to 10 (for largest/factor=1)
-        // Spread is 10 - 3 = 7
         let numPieces = 3 + Math.floor(sizeFactor * 7);
-
-        // Add some randomness: +/- 1 piece, but still influenced by size
-        // Example: if sizeFactor maps to 5 pieces, can be 4, 5, or 6.
-        // If it maps to 3, can be 3 or 4. If it maps to 10, can be 9 or 10.
         const randomness = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
         numPieces += randomness;
-
-        // Clamp numPieces between 3 and 10
         numPieces = Math.max(3, Math.min(10, numPieces));
-
-        console.log(
-          `Explosion: Parent ${player.username} (r=${player.r.toFixed(
-            2
-          )}, mass=${Math.round(
-            player.r * player.r
-          )}) is exploding. Storing preExplosionRadius=${player.r.toFixed(2)}.`
-        );
         debugPlayerListCounter = DEBUG_PLAYER_LIST_DURATION_FRAMES;
-        console.log(
-          `Explosion Trigger: Activated player list logging for ${DEBUG_PLAYER_LIST_DURATION_FRAMES} frames.`
-        );
-        // const pieceRadius = player.r / Math.sqrt(numPieces); // Old calculation Removed
 
         const pieceRadii = [];
         if (numPieces > 0) {
@@ -1110,7 +1026,6 @@ function animate() {
           const angle =
             (k / numPieces) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
           const currentPieceRadius = pieceRadii[k];
-
           players.push({
             username: `${player.username}_piece_${Date.now()}_${k}`,
             display_name: player.display_name,
@@ -1127,6 +1042,8 @@ function animate() {
             spawnTime: Date.now(),
             canMergeTime: Date.now() + 15000,
             parentPreExplosionRadius: player.r,
+            master: player.master,
+            title: player.title,
           });
         }
 
@@ -1148,8 +1065,6 @@ function animate() {
 
         break;
       }
-    }
-    if (collidedWithTree) {
     }
   }
 
@@ -1218,7 +1133,7 @@ function animate() {
 
     // Orbiter Spawning Logic
     if (
-      p.r >= 100 &&
+      p.r >= 70 &&
       !p.orbitingSpikeTree &&
       !p.hasOrbiterSpawned &&
       Date.now() >= p.nextOrbiterAvailableTime
@@ -1235,7 +1150,7 @@ function animate() {
       // Note: p.nextOrbiterAvailableTime is NOT reset here; it's set when an orbiter is lost/dropped.
     }
     // Orbiter Despawning Logic (if player shrinks)
-    else if (p.r < 100 && !p.isPiece && p.orbitingSpikeTree) {
+    else if (p.r < 70 && !p.isPiece && p.orbitingSpikeTree) {
       // Added !p.isPiece condition
       p.orbitingSpikeTree = null;
       p.hasOrbiterSpawned = false; // Allow respawn if they grow again
@@ -1285,7 +1200,11 @@ function animate() {
           (p.orbitingSpikeTree.y + canvas.height) % canvas.height;
       }
     }
-
+    if (isNaN(p.x)) {
+      console.log(" *** RIGHT BEFORE THE CRASH ****");
+      console.log(p);
+      throw new Error("ERROR");
+    }
     if (p.isPiece) {
       let isUnderFreshSiblingGravitation = false;
       if (p.isPiece && p.canMergeTime && p.originalUsername) {
@@ -1461,7 +1380,6 @@ function animate() {
         delete eatTargets[p.username];
       }
     }
-
     if (!isPursuingForcedTarget) {
       if (!p.isPiece && Math.random() < 0.75) {
         let totalRepulsionDx = 0;
@@ -1499,7 +1417,6 @@ function animate() {
           }
         }
       }
-
       if (!avoidingSpikes) {
         let potentialAttackTarget = null;
         let localTargetDist = Infinity;
@@ -1724,7 +1641,6 @@ function animate() {
         p.dy += normY * standardAccel;
       }
     }
-
     // --- BEGIN MASTER-BASED GRAVITATION ---
     if (p.master) {
       // Ensure player has a master property
@@ -1788,7 +1704,6 @@ function animate() {
           const normVecX = vecX / dist;
           const normVecY = vecY / dist;
           const MASTER_GRAVITATION_FORCE = 0.3; // Tunable constant force
-
           p.dx += normVecX * MASTER_GRAVITATION_FORCE;
           p.dy += normVecY * MASTER_GRAVITATION_FORCE;
         }
@@ -1840,7 +1755,6 @@ function animate() {
     actualSpeed = baseSpeed * p.currentSpeedMultiplier;
     p.dx = Math.max(-actualSpeed, Math.min(actualSpeed, p.dx));
     p.dy = Math.max(-actualSpeed, Math.min(actualSpeed, p.dy));
-
     if (p.isStopping && p.canMoveAfterStopTime === 0) {
       const slowdownDuration = 1500; // 1.5 seconds
       const elapsedTime = Date.now() - p.stopStartTime;
@@ -1875,11 +1789,9 @@ function animate() {
       p.canMoveAfterStopTime = 0;
       p.originalSpeedComponents = { dx: 0, dy: 0, currentSpeedMultiplier: 1.0 }; // Reset to default
     }
-
     if (p.isPiece && p.canMergeTime && Date.now() < p.canMergeTime) {
       for (const otherP of players) {
         if (otherP === p) continue; // Don't compare with self
-
         if (
           otherP.isPiece &&
           otherP.canMergeTime &&
@@ -1891,25 +1803,20 @@ function animate() {
           const deltaY = getShortestDelta(p.y, otherP.y, canvas.height);
           const distance = Math.hypot(deltaX, deltaY);
           const minDistance = p.r + otherP.r;
-
           if (distance < minDistance && distance > 0) {
             // distance > 0 to avoid division by zero if somehow they are at the exact same spot
             const overlap = minDistance - distance;
             // Normalize the delta vector to get direction
             const normDeltaX = deltaX / distance;
             const normDeltaY = deltaY / distance;
-
             // Push amount for each piece. Add a small epsilon to ensure separation.
             const pushAmount = overlap / 2 + 0.1;
-
             // Apply push to p (away from otherP)
             p.x -= normDeltaX * pushAmount;
             p.y -= normDeltaY * pushAmount;
-
             // Apply push to otherP (away from p)
             otherP.x += normDeltaX * pushAmount;
             otherP.y += normDeltaY * pushAmount;
-
             // It's important to handle canvas wrapping for positions AFTER direct modification
             // However, the main loop already has p.x = (p.x + canvas.width) % canvas.width;
             // This might lead to complex interactions if a push sends something far off.
@@ -1922,13 +1829,18 @@ function animate() {
         }
       }
     }
+    // console.log(p.title, p.x, p.y);
+    p.dx = isNaN(p.dx) ? 0 : p.dx;
+    p.dy = isNaN(p.dy) ? 0 : p.dy;
+    p.x = isNaN(p.x) ? 0 : p.x;
+    p.y = isNaN(p.y) ? 0 : p.y;
 
     p.x += p.dx;
     p.y += p.dy;
 
     p.x = (p.x + canvas.width) % canvas.width;
     p.y = (p.y + canvas.height) % canvas.height;
-
+    // console.log(p.title, p.x, p.y);
     if (
       Math.hypot(p.x - p.lastPosition.x, p.y - p.lastPosition.y) < 0.1 &&
       Math.hypot(p.dx, p.dy) < 0.1
@@ -2136,44 +2048,12 @@ function animate() {
       }
 
       if (isLastSurvivor) {
-        console.log(
-          `Reforming: Survivor piece ${p.username} (original: ${
-            p.originalUsername
-          }) found. Current r=${p.r.toFixed(2)}, mass=${Math.round(
-            p.r * p.r
-          )}. Stored parentPreExplosionRadius=${p.parentPreExplosionRadius.toFixed(
-            2
-          )}.`
-        );
-        // p.r = p.parentPreExplosionRadius; // OLD - Incorrectly resets to pre-explosion size.
-        // p.targetR = p.parentPreExplosionRadius; // OLD - Also incorrect.
-
-        // NEW LOGIC for r and targetR:
-        // Neither p.r nor p.targetR are modified here.
-        // p.targetR should have been correctly updated by prior logic (food eating, piece absorption).
-        // p.r will naturally animate towards p.targetR in drawPlayer().
-        // This block now only handles state changes (isPiece, username, cleanup) and dx/dy reset.
-        console.log(
-          `Reforming: Survivor piece radius set to r=${p.r.toFixed(
-            2
-          )}, targetR=${p.targetR.toFixed(2)}, mass=${Math.round(p.r * p.r)}.`
-        );
-        p.isPiece = false;
         const oldPieceUsername = p.username; // For logging. Note: p.username was the piece's unique ID here.
         p.username = p.originalUsername; // Now p.username is the original Twitch username.
-        console.log(
-          `Reforming: Survivor piece (now main player ${p.username}) properties: isPiece=${p.isPiece}, final username=${p.username}.`
-        );
-
         delete p.canMergeTime;
         delete p.parentPreExplosionRadius;
-        // p.originalUsername is now p.username, so no need to delete.
-
         p.dx = 0;
         p.dy = 0;
-
-        // Ensure it doesn't get processed by piece-specific logic again this frame if possible,
-        // though being in a subsequent loop helps.
       }
     }
   }
@@ -2193,84 +2073,80 @@ function animate() {
         delete eatTargets[p.username];
       }
       players.splice(i, 1);
-      console.log(
-        `Despawned timed player: ${p.username} due to lifetime expiration.`
-      );
     }
   }
   // --- END ZERG (AND OTHER TIMED PLAYER) LIFETIME CLEANUP ---
 
   players.sort((a, b) => a.r - b.r);
-  for (const p of players) drawPlayer(p);
+  for (const p of players) {
+    if (!isNaN(p.dx) && !isNaN(p.dy)) {
+      drawPlayer(p);
+    }
+  }
 
   drawParticles();
   spawnFood();
 
   const scoreboardEntries = [];
-
-  for (const player of players) {
-    scoreboardEntries.push({
-      display_name: player.display_name,
-      username: player.username,
-      score: Math.round(player.r * player.r),
-    });
-  }
-
-  const pieceUsernames = new Set();
   players.forEach((p) => {
-    if (p.isPiece) {
-      pieceUsernames.add(p.originalUsername);
+    if (
+      !p.isPiece &&
+      !p.username.includes("_piece") &&
+      !p.username.includes("Zerg")
+    ) {
+      scoreboardEntries.push({
+        display_name: p.display_name,
+        username: p.username,
+        score: Math.round(Math.floor(p.r)),
+      });
     }
   });
-
-  for (const username of pieceUsernames) {
-    if (!players.some((p) => p.username === username && !p.isPiece)) {
-      let largestPieceRadius = 0;
-      let displayName = "";
-      players.forEach((p) => {
-        if (p.isPiece && p.originalUsername === username) {
-          if (p.r > largestPieceRadius) {
-            largestPieceRadius = p.r;
-          }
-          if (!displayName) displayName = p.display_name;
-        }
-      });
-      if (largestPieceRadius > 0) {
-        if (!scoreboardEntries.some((e) => e.username === username)) {
-          scoreboardEntries.push({
-            display_name: displayName || username,
-            username: username,
-            score: Math.round(largestPieceRadius * largestPieceRadius),
-          });
-        }
-      }
-    }
-  }
 
   const sortedScoreboardEntries = scoreboardEntries.sort(
     (a, b) => b.score - a.score
   );
   const entriesToDisplayCount = Math.min(sortedScoreboardEntries.length, 20);
 
-  ctx.fillStyle = "rgba(0,0,0,0.6)";
-  ctx.fillRect(20, 20, 220, 36 + entriesToDisplayCount * 26);
-
-  ctx.fillStyle = "white";
   ctx.font = "18px sans-serif";
   ctx.textAlign = "left";
-  ctx.fillText("🏆 Resnīši (kg):", 30, 45);
+
+  // Measure the longest entry width
+  let maxTextWidth = ctx.measureText("🏆 Resnīši (R) / 300").width;
+
+  sortedScoreboardEntries
+    .slice(0, entriesToDisplayCount)
+    .forEach((entry, i) => {
+      const text = `${i + 1}. ${entry.display_name} (${Math.round(
+        entry.score
+      )})`;
+      const width = ctx.measureText(text).width;
+      if (width > maxTextWidth) maxTextWidth = width;
+    });
+
+  const padding = 20;
+  const boxX = 20;
+  const boxY = 20;
+  const boxWidth = maxTextWidth + padding * 2;
+  const boxHeight = 36 + entriesToDisplayCount * 26;
+
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+
+  ctx.fillStyle = "white";
+  ctx.fillText("🏆 Resnīši (R) / 300", boxX + padding, 45);
 
   sortedScoreboardEntries
     .slice(0, entriesToDisplayCount)
     .forEach((entry, i) => {
       ctx.fillText(
         `${i + 1}. ${entry.display_name} (${Math.round(entry.score)})`,
-        30,
+        boxX + padding,
         70 + i * 25
       );
     });
 
   const winner = players.find((p) => p.r >= 300);
+
   if (winner && !gameResetting) {
     winnerDiv.textContent = `🏆 ${winner.display_name} uzvarēja!`;
     winnerDiv.style.display = "block";
