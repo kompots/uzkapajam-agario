@@ -37,6 +37,11 @@ const colors = [
   "cyan",
 ];
 const NUM_SPIKED_TREES = 0;
+const BUMP_COOLDOWN = 3000; // 10 seconds in milliseconds
+const BUMP_CHARGE_SPEED = 55;
+const BUMP_CHARGE_DURATION = 10000; // 2 seconds in milliseconds
+const BUMP_IMPULSE = 10000; // Tunable: force applied to the target player
+const RECOIL_IMPULSE = 1000; // Tunable: force applied back to the bumper
 const SPIKED_TREE_RADIUS = 15;
 const SPIKED_TREE_RESPAWN_DELAY = 30000;
 let lastTreeRespawnTime = 0;
@@ -51,6 +56,7 @@ canvas.height = 1;
 client.connect();
 
 client.on("message", (channel, tags, message, self) => {
+  message = message.replace(/@/g, "");
   if (message.includes("!eat")) {
     const player = players.find((p) => p.username === tags.username);
     if (player && player.isStopping) {
@@ -69,6 +75,46 @@ client.on("message", (channel, tags, message, self) => {
       player.speedBoostEndTime = Date.now() + 5000;
       player.boostActivationTime = Date.now();
     }
+  } else if (message.includes("!bump")) {
+    const player = players.find((p) => p.username === tags.username);
+    if (player && player.isStopping) {
+      return;
+    }
+    if (player && isPlayerExploded(player.master)) {
+      return;
+    }
+
+    let parts = message.split(" ");
+    let target = players.find((p) => p.username === parts[1]);
+    if (target) {
+      console.log(
+        player.isBumping,
+        Date.now() - player.lastBumpTime > BUMP_COOLDOWN,
+        Date.now() - player.lastBumpTime,
+        BUMP_COOLDOWN
+      );
+      if (
+        !player.isBumping &&
+        Date.now() - player.lastBumpTime > BUMP_COOLDOWN
+      ) {
+        player.isBumping = true;
+        player.bumpTargetUsername = target.username;
+        player.bumpChargeStartTime = Date.now();
+        player.lastBumpTime = Date.now();
+        eatTargets[tags.username] = parts[1];
+        console.log(
+          `${player.username} has been triggered to bump ${target.username}`
+        );
+      } else {
+        if (player.isBumping) {
+          console.log(
+            `${player.username} cannot start a new bump; already bumping.`
+          );
+        } else {
+          console.log(`${player.username} bump is on cooldown.`);
+        }
+      }
+    }
   } else if (message === "!stop") {
     const player = players.find((p) => p.username === tags.username);
     if (player) {
@@ -76,6 +122,7 @@ client.on("message", (channel, tags, message, self) => {
         return;
       }
       player.isStopping = true;
+      player.isBumping = false;
       player.stopStartTime = Date.now();
       player.originalSpeedComponents = {
         dx: player.dx,
@@ -186,12 +233,12 @@ const randomNickname = () => {
 };
 
 let mockPlayers = [];
-for (let i = 0; i < 50; i++) {
+for (let i = 0; i < 10; i++) {
   mockPlayers.push(randomNickname());
 }
 
-const mockCommands = ["!eat", "!stop", "!bop", "!zerg"];
-
+// const mockCommands = ["!eat", "!stop", "!bop", "!zerg", "!bump"];
+// const mockCommands = ["!bump"];
 // mockPlayers.forEach((element, index, array) => {
 //   play({
 //     username: element,
@@ -217,6 +264,14 @@ function triggerMockCommand() {
       simulatedMessage += ` ${targetPlayer.username}`;
     }
   }
+  if (randomCommand === "!bump") {
+    const targetPlayer = players.find(
+      (p) => p.username !== randomPlayer.username
+    );
+    if (targetPlayer) {
+      simulatedMessage += ` ${targetPlayer.username}`;
+    }
+  }
 
   // Simulate the TMI 'message' event
   client.emit(
@@ -232,7 +287,7 @@ function triggerMockCommand() {
   );
 }
 
-// setInterval(triggerMockCommand, 1000);
+// setInterval(triggerMockCommand, 500);
 
 async function getAppToken() {
   const res = await axios.post("https://id.twitch.tv/oauth2/token", null, {
@@ -452,7 +507,7 @@ async function play(data) {
       data.subscriber || data.mod || data.turbo ? true : false;
     let isPrivilegedByFollow = false;
     const finalIsPrivileged = !!(isPrivilegedByBadge || isPrivilegedByFollow);
-    const radius = 20;
+    const radius = 35;
     let x,
       y,
       safe = false;
@@ -494,6 +549,8 @@ async function play(data) {
       nextOrbiterAvailableTime: 0,
       hasUsedSwarm: false,
       title: data.username,
+      isBumping: false,
+      lastBumpTime: new Date(),
     };
 
     const existing = players.find(
@@ -1044,6 +1101,8 @@ function animate() {
             parentPreExplosionRadius: player.r,
             master: player.master,
             title: player.title,
+            isBumping: false,
+            lastBumpTime: new Date(),
           });
         }
 
@@ -1940,7 +1999,50 @@ function animate() {
       const dy = getShortestDelta(p1.y, p2.y, canvas.height);
       const dist = Math.hypot(dx, dy);
 
-      // New collision logic for similarly sized circles
+      // Check for active bump collision
+      if (
+        p1.isBumping &&
+        p1.bumpTargetUsername === p2.username &&
+        dist < p1.r + p2.r &&
+        dist > 0
+      ) {
+        // p1 is successfully bumping p2
+        const normDx = dx / dist; // dx is p2.x - p1.x (shortest)
+        const normDy = dy / dist; // dy is p2.y - p1.y (shortest)
+
+        // Apply bump to target (p2)
+        p2.dx += normDx * BUMP_IMPULSE;
+        p2.dy += normDy * BUMP_IMPULSE;
+
+        // Apply recoil to bumper (p1)
+        p1.dx -= normDx * RECOIL_IMPULSE;
+        p1.dy -= normDy * RECOIL_IMPULSE;
+
+        // Add particle effect for bump
+        for (let k = 0; k < 15; k++) {
+          // k is fine here, local scope
+          particles.push({
+            x: p1.x + normDx * p1.r, // Approx contact point
+            y: p1.y + normDy * p1.r,
+            dx: (Math.random() - 0.5 + normDx) * 5, // Particles scatter generally in bump direction
+            dy: (Math.random() - 0.5 + normDy) * 5,
+            alpha: 1,
+            size: 2 + Math.random() * 3,
+            color: "rgba(255, 255, 100, 0.8)", // Yellowish for bump
+          });
+        }
+
+        setTimeout(function () {
+          p1.isBumping = false;
+          p1.bumpTargetUsername = null;
+          p1.lastBumpTime = Date.now();
+        }, 10000);
+
+        // console.log(`${p1.username} bumped ${p2.username}`);
+
+        continue; // Skip other collision checks for this pair this frame
+      }
+
       if (
         !p1.isPiece &&
         !p2.isPiece && // Both are main players
