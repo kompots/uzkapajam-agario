@@ -1936,9 +1936,44 @@ function animate() {
         break; // p1 has eaten, break from inner loop for p2
       }
 
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
+      const dx = getShortestDelta(p1.x, p2.x, canvas.width);
+      const dy = getShortestDelta(p1.y, p2.y, canvas.height);
       const dist = Math.hypot(dx, dy);
+
+      // New collision logic for similarly sized circles
+      if (
+        !p1.isPiece &&
+        !p2.isPiece && // Both are main players
+        dist < p1.r + p2.r &&
+        dist > 0 && // They are overlapping (and not at the exact same spot)
+        Math.abs(p1.r - p2.r) < 5 // Radius difference is less than 5
+      ) {
+        const overlap = p1.r + p2.r - dist;
+        const pushAmount = overlap / 2 + 0.1; // Epsilon to ensure separation
+
+        // Normalized direction vector from p1 to p2
+        const normDx = dx / dist;
+        const normDy = dy / dist;
+
+        // Push p1 away from p2
+        p1.x -= normDx * pushAmount;
+        p1.y -= normDy * pushAmount;
+
+        // Push p2 away from p1
+        p2.x += normDx * pushAmount;
+        p2.y += normDy * pushAmount;
+
+        // Wrap positions
+        p1.x = (p1.x + canvas.width) % canvas.width;
+        p1.y = (p1.y + canvas.height) % canvas.height;
+        p2.x = (p2.x + canvas.width) % canvas.width;
+        p2.y = (p2.y + canvas.height) % canvas.height;
+
+        // Potentially add slight bounce effect by reversing some velocity?
+        // For now, just separation. We can enhance later if needed.
+        // This 'continue' will skip the eating logic below for this pair
+        continue;
+      }
 
       if (
         dist < p1.r &&
